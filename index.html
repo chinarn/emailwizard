@@ -40,7 +40,8 @@
       <div class="header">
         <div class="title">Email Bulk Actions</div>
         <div class="row" style="max-width:620px">
-          <a id="signinLink" class="button" href="#">Sign in</a>
+          <a id="signinLink" class="button" href="https://login.mypurecloud.jp/oauth/authorize?client_id=5ad8dc1d-2ee1-41dd-9771-1c0e58f22203&amp;response_type=token&amp;redirect_uri=https%3A%2F%2Fchinarn.github.io%2Femailwizard%2F&amp;state=email_bulk_implicit" target="_self" rel="nofollow noopener">Sign in</a>
+          <noscript><div class="muted" style="margin-top:6px">JavaScript is disabled. Use the button above to sign in.</div></noscript>
           <button id="signoutBtn" style="display:none">Sign out</button>
         </div>
       </div>
@@ -172,7 +173,7 @@
     }
 
     // Anchor-based sign-in (less brittle than programmatic nav)
-    function wireSigninLink(){ var a=$('signinLink'); var u=buildAuthUrl(); a.href = u; a.target = '_self'; }
+    function wireSigninLink(){ /* Not needed: anchor is now hard-coded for reliability */ }
 
     $('signoutBtn').addEventListener('click', function(){ token=''; $('rows').innerHTML=''; $('queueSelect').innerHTML='<option disabled selected>Sign in first</option>'; $('wrapupSelect').innerHTML='<option disabled selected>Select a queue first</option>'; updateSigninState(); $('whoami').textContent=''; $('queueCount').textContent=''; $('log').value=''; $('userSelect').innerHTML='<option value="" disabled selected>Load users…</option>'; });
 
@@ -180,8 +181,7 @@
     window.addEventListener('unhandledrejection', function(e){ setError('Promise rejection: ' + (e && e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
 
     (function init(){
-      log('App loaded. Redirect URI: ' + REDIRECT_URI);
-      wireSigninLink();
+      log('App loaded. Redirect URI: ' + REDIRECT_URI); // Anchor already hard-coded; no runtime wiring
       var th = readTokenFromHash();
       if (th){ token = th.access_token; log('Token received.'); }
       updateSigninState();
