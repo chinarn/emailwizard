@@ -135,7 +135,8 @@
     var token = "";
     var baseUrl = function(){ return "https://api." + REGION_HOST; };
 
-    function log(line){ var stamp = new Date().toLocaleTimeString(); var t=$("log"); t.value = (t.value? t.value+"\n":"")+ stamp + " • " + line; t.scrollTop = t.scrollHeight; }
+    function log(line){ var stamp = new Date().toLocaleTimeString(); var t=$("log"); t.value = (t.value? t.value+"
+":"")+ stamp + " • " + line; t.scrollTop = t.scrollHeight; }
     function setError(msg){ $("errors").textContent = msg || ""; }
     function clearError(){ setError(""); }
 
