@@ -1,4 +1,6 @@
-<!doctype html>
+<td>${esc(r.from)}</td>
+        <td class="mono">${esc(r.conversationId)}</td>
+        <td class="mono">${esc(r.agentParticipantId || r.acdParticipantId || '')}</td><!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -68,8 +70,30 @@
         <div class="row" style="margin-top:12px">
           <button id="refreshBtn" disabled>Refresh Emails</button>
           <button id="assignMeBtn" disabled>Assign to me</button>
-          <input id="targetUserId" placeholder="Target userId for Transfer" style="flex:1" />
-          <button id="transferBtn" disabled>Transfer to user</button>
+          <div class="row" style="flex:2">
+            <div style="flex:1">
+              <label class="muted">Filter by Subject</label>
+              <input id="filterSubject" placeholder="Type to filter…" />
+            </div>
+            <div style="flex:1">
+              <label class="muted">Filter by From</label>
+              <input id="filterFrom" placeholder="Type to filter…" />
+            </div>
+          </div>
+          <div class="row" style="flex:1">
+            <div style="flex:1">
+              <label class="muted">Transfer to user</label>
+              <select id="userSelect" disabled>
+                <option value="" disabled selected>Load users…</option>
+              </select>
+            </div>
+            <div style="align-self:flex-end">
+              <button id="loadUsersBtn" disabled>Load Users</button>
+            </div>
+            <div style="align-self:flex-end">
+              <button id="transferBtn" disabled>Transfer to selected</button>
+            </div>
+          </div>
           <button id="wrapDiscBtn" disabled style="background:#52202a">Wrap-up + Disconnect</button>
         </div>
 
@@ -82,7 +106,6 @@
                 <th style="width:26px"><input type="checkbox" id="checkAll" /></th>
                 <th>Subject</th>
                 <th>From</th>
-                <th>State</th>
                 <th>ConversationId</th>
                 <th>Agent/ACD ParticipantId</th>
                 <th>CommId</th>
@@ -104,7 +127,7 @@
   <script>
     // ======== CONFIG (Preset) ========
     // Set these to your OAuth client + region. No UI prompts for region/redirect are shown.
-    var REGION_HOST  = "mypurecloud.jp"; // e.g., ap-northeast-1 (Tokyo)
+    var REGION_HOST  = "mypurecloud.jp"; // e.g., ap-southeast-1 (Singapore)
     var CLIENT_ID    = "5ad8dc1d-2ee1-41dd-9771-1c0e58f22203";     // <-- set your OAuth client id
     var REDIRECT_URI = window.location.origin + window.location.pathname; // same page
     var OAUTH_STATE  = "email_bulk_implicit";
@@ -158,8 +181,11 @@
       if (th) { token = th.access_token; }
       updateSigninState();
       if (token) bootstrap();
-      $("queueSelect").addEventListener("change", function(){ loadWrapupsForQueue(this.value); $("wrapupSelect").disabled = !this.value; $("wrapDiscBtn").disabled = !this.value; });
+      $("queueSelect").addEventListener("change", function(){ loadWrapupsForQueue(this.value); $("wrapupSelect").disabled = !this.value; $("wrapDiscBtn").disabled = !this.value; filterRows(); }); $("wrapupSelect").disabled = !this.value; $("wrapDiscBtn").disabled = !this.value; });
       $("refreshBtn").addEventListener("click", refreshEmails);
+      $("filterSubject").addEventListener("input", filterRows);
+      $("filterFrom").addEventListener("input", filterRows);
+      $("loadUsersBtn").addEventListener("click", loadUsers);
       $("assignMeBtn").addEventListener("click", assignToMe);
       $("transferBtn").addEventListener("click", transferToUser);
       $("wrapDiscBtn").addEventListener("click", wrapupAndDisconnect);
@@ -178,8 +204,10 @@
         var me = await api("/api/v2/users/me");
         $("whoami").textContent = `Signed in as ${me.name} (${me.id}) · ${REGION_HOST}`;
         log("Authenticated");
+        $("loadUsersBtn").disabled = false;
         await loadQueues();
       } catch(e){ setError(e.message||String(e)); }
+    }
     }
 
     async function loadQueues(){
@@ -202,16 +230,22 @@
     async function loadWrapupsForQueue(queueId){
       $("wrapupSelect").innerHTML = '<option value="" disabled selected>Loading…</option>';
       try {
-        // Only display WRAP-UP CODES associated with the selected queue
-        var q = await api(`/api/v2/routing/queues/${queueId}?expand=wrapupCodes`);
-        var codes = (q && q.wrapupCodes) || [];
-        if (!Array.isArray(codes)) codes = [];
-        if (!codes.length){
+        // Retrieve ONLY the wrap-up codes assigned to this queue via the subresource
+        // This avoids rely-on-expand differences across regions/SDKs and respects paging.
+        var items = []; var page=1, pageSize=100, data;
+        do {
+          data = await api(`/api/v2/routing/queues/${queueId}/wrapupcodes?pageSize=${pageSize}&pageNumber=${page}`);
+          if (data && Array.isArray(data.entities)) { data.entities.forEach(c => items.push({ id:c.id, name:c.name })); }
+          page++;
+        } while (data && data.pageCount && page <= data.pageCount);
+
+        if (!items.length){
           $("wrapupSelect").innerHTML = '<option value="" disabled selected>No wrap-up codes on this queue</option>';
           return;
         }
+        items.sort((a,b)=>a.name.localeCompare(b.name));
         $("wrapupSelect").innerHTML = ['<option value="" disabled selected>(choose wrap-up code)</option>']
-          .concat(codes.map(c=>`<option value="${c.id}">${c.name} — ${c.id}</option>`)).join("");
+          .concat(items.map(c=>`<option value="${c.id}">${c.name} — ${c.id}</option>`)).join("");
       } catch(e){ setError(e.message||String(e)); $("wrapupSelect").innerHTML = '<option disabled selected>Wrap-up codes unavailable</option>'; }
     }
 
@@ -259,26 +293,26 @@
       var comm = aSess || acdSess || null;
       return {
         conversationId: c.conversationId,
-        subject: (comm && (comm.subject || comm.emailSubject)) || '(no subject)',
-        from: (external && external.address) || '',
-        state: (agent && agent.segmentType) || (acd && acd.segmentType) || '',
+        subject: (comm && (comm.subject || comm.emailSubject)) || '',
+        from: (external && (external.address || external.externalContactId || external.name)) || '',
         agentParticipantId: (agent && agent.participantId) || null,
         acdParticipantId: (acd && acd.participantId) || null,
         emailCommId: (comm && (comm.sessionId || comm.communicationId)) || null,
+        _needsEnrich: true // mark for enrichment if fields are blank
       };
     }
     function addRow(r){
       var tr = document.createElement('tr');
       tr.innerHTML = `
         <td><input type="checkbox"></td>
-        <td>${esc(r.subject)}</td>
-        <td>${esc(r.from)}</td>
-        <td>${esc(r.state||'')}</td>
+        <td class="cell-subject">${esc(r.subject||'')}</td>
+        <td class="cell-from">${esc(r.from||'')}</td>
         <td class="mono">${esc(r.conversationId)}</td>
         <td class="mono">${esc(r.agentParticipantId || r.acdParticipantId || '')}</td>
         <td class="mono">${esc(r.emailCommId || '')}</td>`;
       tr.dataset.payload = JSON.stringify(r);
       $("rows").appendChild(tr);
+      if (!r.subject || !r.from) enrichRowDetails(r.conversationId, tr); // async enrichment
     }
     function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
@@ -298,9 +332,10 @@
         await refreshEmails();
       } catch(e){ setError(e.message||String(e)); }
     }
+    
 
     async function transferToUser(){
-      var userId = $("targetUserId").value.trim(); if (!userId){ log('Enter a target userId'); return; }
+      var userId = $("userSelect").value; if (!userId){ log('Pick a user from the list'); return; }
       var sel = selectedRows(); if (!sel.length){ log('Select at least one row'); return; }
       var ok=0,fail=0;
       for (var r of sel){
@@ -333,7 +368,44 @@
       }
       log(`Wrap-up + disconnect done. Success: ${ok}, Failed: ${fail}`);
       await refreshEmails();
+      
+    async function enrichRowDetails(conversationId, tr){
+      try {
+        var convo = await api(`/api/v2/conversations/${conversationId}`);
+        // Try to find email subject/from from full conversation if analytics summary was sparse
+        var parts = (convo && convo.participants) || [];
+        var external = parts.find(p=>p.purpose==='external');
+        var agent = parts.find(p=>p.purpose==='agent' || p.purpose==='user');
+        var aEmail = agent && (agent.communications || agent.sessions || []);
+        var subject = '';
+        if (aEmail && aEmail.length){
+          var e = aEmail.find(s=>s.mediaType==='email') || aEmail[0];
+          subject = (e && (e.subject || e.emailSubject || (e.additionalProperties && e.additionalProperties.subject))) || '';
+        }
+        var from = (external && (external.address || external.email || external.name)) || '';
+        if (subject) tr.querySelector('.cell-subject').textContent = subject;
+        if (from) tr.querySelector('.cell-from').textContent = from;
+        // update payload cache
+        var r = JSON.parse(tr.dataset.payload);
+        r.subject = subject || r.subject; r.from = from || r.from;
+        tr.dataset.payload = JSON.stringify(r);
+        filterRows();
+      } catch(e){ /* ignore enrichment failures */ }
     }
+
+    function filterRows(){
+      var fs = ($("filterSubject").value||'').toLowerCase();
+      var ff = ($("filterFrom").value||'').toLowerCase();
+      Array.from(document.querySelectorAll('#rows tr')).forEach(tr => {
+        var r = JSON.parse(tr.dataset.payload);
+        var sOk = !fs || (r.subject||'').toLowerCase().includes(fs);
+        var fOk = !ff || (r.from||'').toLowerCase().includes(ff);
+        tr.style.display = (sOk && fOk) ? '' : 'none';
+      });
+    }
+
   </script>
+</body>
+</html>
 </body>
 </html>
