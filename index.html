@@ -41,7 +41,7 @@
       <div class="header">
         <div class="title">Email Bulk Actions</div>
         <div class="row" style="max-width:620px">
-          <!-- Rock-solid authorize link (works even if JS fails) -->
+          <!-- Hard-coded authorize link (works even if JS fails) -->
           <a
             id="signinLink"
             class="button"
@@ -200,7 +200,6 @@
     window.addEventListener('error', function(e){ setError(e && e.message ? e.message : 'Script error'); });
     window.addEventListener('unhandledrejection', function(e){ setError('Promise rejection: ' + (e && e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
 
-    // ----- Init: detect token & wire UI -----
     (function init(){
       log('App loaded. Waiting for sign-in or token in URL…');
 
@@ -214,12 +213,9 @@
           bootstrap();
         }
       }
-      // Handle current URL (in case we landed here with the hash)
       handleTokenInUrl();
-      // And handle any future hash changes
       window.addEventListener('hashchange', handleTokenInUrl);
 
-      // Wire UI actions
       $('queueSelect').addEventListener('change', function(){ loadWrapupsForQueue(this.value); $('wrapupSelect').disabled = !this.value; $('wrapDiscBtn').disabled = !this.value; filterRows(); });
       $('refreshBtn').addEventListener('click', refreshEmails);
       $('assignMeBtn').addEventListener('click', assignToMe);
@@ -279,7 +275,7 @@
         if (!items.length){ $('wrapupSelect').innerHTML = '<option value="" disabled selected>No wrap-up codes on this queue</option>'; return; }
         items.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
         var html = '<option value="" disabled selected>(choose wrap-up code)</option>';
-        for (var j=0;j<items.length;j++){ html += '<option value="' + items[j].id + '">' + items[j.name] + '</option>'; }
+        for (var j=0;j<items.length;j++){ html += '<option value="' + items[j].id + '">' + items[j].name + ' — ' + items[j].id + '</option>'; }
         $('wrapupSelect').innerHTML = html;
       }catch(e){ setError(e.message || String(e)); $('wrapupSelect').innerHTML = '<option disabled selected>Wrap-up codes unavailable</option>'; }
     }
@@ -299,7 +295,6 @@
       try{
         var end = new Date().toISOString();
         var start = new Date(Date.now() - 2*60*60*1000).toISOString();
-        // queueId is a SEGMENT dimension in analytics
         var body = {
           interval: start + '/' + end,
           order: 'desc',
@@ -322,7 +317,6 @@
         var data = await res.json();
         var convs = (data && data.conversations) ? data.conversations : [];
 
-        // Build base rows first
         var rows = [];
         for (var i=0;i<convs.length;i++){
           var c = convs[i];
@@ -331,7 +325,6 @@
         }
         for (var r=0;r<rows.length;r++){ addRow(rows[r]); }
 
-        // Enrich each row via /conversations/emails/{conversationId}
         await bulkEnrichRows();
 
         log('Loaded ' + rows.length + ' in-progress emails');
@@ -388,7 +381,38 @@
       });
     }
 
-    // ----- Enrichment using /conversations/emails/{conversationId} -----
+    // ---------- Robust enrichment: conversations/emails/{id} ----------
+    function ci(obj, key){ // case-insensitive getter
+      if (!obj || typeof obj !== 'object') return undefined;
+      var k = Object.keys(obj).find(function(x){ return x.toLowerCase()===key.toLowerCase(); });
+      return k ? obj[k] : undefined;
+    }
+    function pickFirstNonEmpty(arr){
+      for (var i=0;i<arr.length;i++){ var v=arr[i]; if (v && typeof v==='string' && v.trim()) return v.trim(); }
+      return '';
+    }
+    function shallowDeepSubjectScan(o, maxObjects){
+      // very shallow object-graph scan for subject-like keys; bounded for safety
+      var queue=[o], seen=new Set(), count=0;
+      while(queue.length && count<maxObjects){
+        var cur = queue.shift();
+        if (!cur || typeof cur!=='object' || seen.has(cur)) continue;
+        seen.add(cur); count++;
+        var subj = pickFirstNonEmpty([
+          ci(cur,'subject'),
+          ci(cur,'emailSubject')
+        ]);
+        if (subj) return subj;
+        var keys = Object.keys(cur);
+        for (var i=0;i<keys.length;i++){
+          var v = cur[keys[i]];
+          if (v && typeof v==='object') queue.push(v);
+          if (Array.isArray(v)) for (var j=0;j<v.length;j++) if (v[j] && typeof v[j]==='object') queue.push(v[j]);
+        }
+      }
+      return '';
+    }
+
     async function enrichRowDetails(conversationId, tr){
       try{
         var detail = null;
@@ -411,13 +435,35 @@
         }
         var aLeg = firstEmailLeg(agent);
         var qLeg = firstEmailLeg(acd);
-        var subj = (aLeg && (aLeg.subject||aLeg.emailSubject)) || (qLeg && (qLeg.subject||qLeg.emailSubject)) ||
-                   (aLeg && aLeg.headers && (aLeg.headers.subject||aLeg.headers.Subject)) ||
-                   (qLeg && qLeg.headers && (qLeg.headers.subject||qLeg.headers.Subject)) ||
-                   (aLeg && aLeg.additionalProperties && (aLeg.additionalProperties.subject||aLeg.additionalProperties.Subject)) ||
-                   (qLeg && qLeg.additionalProperties && (qLeg.additionalProperties.subject||qLeg.additionalProperties.Subject)) || '';
-        var from = (aLeg && (aLeg.fromAddress||aLeg.fromEmail||aLeg.from)) || (qLeg && (qLeg.fromAddress||qLeg.fromEmail||qLeg.from)) ||
-                   (external && (external.address||external.email||external.name)) || (customer && (customer.address||customer.email||customer.name)) || '';
+
+        // Top-level subject candidates (different payloads expose these)
+        var topCandidates = [
+          ci(detail,'subject'),
+          ci(detail,'emailSubject'),
+          (detail && Array.isArray(detail.emails) && detail.emails[0] && (ci(detail.emails[0],'subject')||ci(detail.emails[0],'emailSubject'))) || '',
+          (detail && detail.initialEmail && (ci(detail.initialEmail,'subject')||ci(detail.initialEmail,'emailSubject'))) || ''
+        ];
+
+        // Leg-level candidates
+        var legCandidates = [
+          aLeg && (ci(aLeg,'subject') || ci(aLeg,'emailSubject')) || '',
+          qLeg && (ci(qLeg,'subject') || ci(qLeg,'emailSubject')) || '',
+          aLeg && aLeg.headers && (ci(aLeg.headers,'Subject') || ci(aLeg.headers,'subject')) || '',
+          qLeg && qLeg.headers && (ci(qLeg.headers,'Subject') || ci(qLeg.headers,'subject')) || '',
+          aLeg && aLeg.additionalProperties && (ci(aLeg.additionalProperties,'Subject') || ci(aLeg.additionalProperties,'subject')) || '',
+          qLeg && qLeg.additionalProperties && (ci(qLeg.additionalProperties,'Subject') || ci(qLeg.additionalProperties,'subject')) || ''
+        ];
+
+        var subj = pickFirstNonEmpty(topCandidates.concat(legCandidates));
+        if (!subj) subj = shallowDeepSubjectScan(detail, 200); // bounded shallow scan
+
+        var from = pickFirstNonEmpty([
+          aLeg && (ci(aLeg,'fromAddress')||ci(aLeg,'fromEmail')||ci(aLeg,'from')),
+          qLeg && (ci(qLeg,'fromAddress')||ci(qLeg,'fromEmail')||ci(qLeg,'from')),
+          external && (ci(external,'address')||ci(external,'email')||ci(external,'name')),
+          customer && (ci(customer,'address')||ci(customer,'email')||ci(customer,'name'))
+        ]);
+
         var commId = (aLeg && (aLeg.id||aLeg.sessionId||aLeg.communicationId)) || (qLeg && (qLeg.id||qLeg.sessionId||qLeg.communicationId)) || null;
 
         if (subj) tr.querySelector('.cell-subject').textContent = subj;
@@ -451,7 +497,7 @@
       await Promise.all(new Array(concurrency).fill(0).map(worker));
     }
 
-    // ----- Actions -----
+    // ---------- Actions ----------
     async function assignToMe(){
       var sel = selectedRows(); if (!sel.length){ log('Select at least one row'); return; }
       try{
