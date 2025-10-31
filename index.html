@@ -138,7 +138,8 @@
     function log(line){
       var stamp = new Date().toLocaleTimeString();
       var t = $("log");
-      t.value = (t.value ? t.value + "\n" : "") + stamp + " • " + line;
+      t.value = (t.value ? t.value + "
+" : "") + stamp + " • " + line;
       t.scrollTop = t.scrollHeight;
     }
     function setError(msg){ $("errors").textContent = msg || ""; }
@@ -171,12 +172,20 @@
     }
 
     $("signinBtn").addEventListener("click", function(){
-      if (CLIENT_ID === "REPLACE_WITH_CLIENT_ID") { alert("Set CLIENT_ID at top of the file."); return; }
-      // Go straight to OAuth authorize (no pre-redirect gate)
-      location.href = buildAuthUrl();
-    }); return; }
-      if (!location.href.startsWith(REDIRECT_URI)) { location.href = REDIRECT_URI; return; }
-      location.href = buildAuthUrl();
+      try {
+        if (!CLIENT_ID || CLIENT_ID === "REPLACE_WITH_CLIENT_ID") {
+          alert("Set CLIENT_ID at top of the file.");
+          return;
+        }
+        // Log what we're about to open (helps diagnose popup blockers / bad URLs)
+        const url = buildAuthUrl();
+        console.log("Redirecting to:", url);
+        log("Opening Genesys Cloud login…");
+        // Top-level navigation (no popup)
+        window.location.assign(url);
+      } catch (e) {
+        setError(e && e.message ? e.message : String(e));
+      }
     });
     $("signoutBtn").addEventListener("click", function(){ token=""; $("rows").innerHTML=""; $("queueSelect").innerHTML='<option disabled selected>Sign in first</option>'; $("wrapupSelect").innerHTML='<option disabled selected>Select a queue first</option>'; updateSigninState(); $("whoami").textContent=""; $("queueCount").textContent=""; $("log").value=""; $("userSelect").innerHTML='<option value="" disabled selected>Load users…</option>'; });
 
