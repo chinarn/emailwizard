@@ -8,7 +8,7 @@
   <style>
     :root { --bg:#0b0d10; --card:#11151a; --muted:#9aa4b2; --text:#e6edf3; --bad:#ff6b7a; --good:#2ec27e; }
     html, body { height:100%; background:var(--bg); color:var(--text); }
-    body { margin:0; font-family:Arial,Helvetica,sans-serif; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
     .banner { background:#12263a; padding:10px 16px; text-align:center; border-bottom:1px solid #21344c; }
     .banner strong { color:#9effb3; }
     .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
@@ -18,8 +18,8 @@
     .content { padding:20px; }
     .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
     label { font-size:12px; color:var(--muted); display:block; margin-bottom:6px; }
-    input, select, textarea, button { width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #263041; background:#0e1217; color:var(--text); padding:10px 12px; }
-    textarea { resize: vertical; max-width: 100%; }
+    input, select, button { width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #263041; background:#0e1217; color:var(--text); padding:10px 12px; }
+    textarea { width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #263041; background:#0e1217; color:var(--text); padding:10px 12px; resize: vertical; max-width:100%; }
     button { background:#1a2330; cursor:pointer; }
     button:hover { background:#1e2a3a; }
     button:disabled { opacity:.6; cursor:not-allowed; }
@@ -29,7 +29,7 @@
     table { width:100%; border-collapse:collapse; }
     th, td { padding:8px 6px; border-bottom:1px solid #253248; vertical-align:top; font-size:13px; }
     th { text-align:left; color:var(--muted); }
-    .mono { font-family:Consolas,Menlo,monospace; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     a.button { display:inline-block; padding:10px 14px; border-radius:8px; border:1px solid #263041; background:#1a2330; color:#e6edf3; text-decoration:none; }
     a.button:hover { background:#1e2a3a; }
   </style>
@@ -41,11 +41,18 @@
       <div class="header">
         <div class="title">Email Bulk Actions</div>
         <div class="row" style="max-width:620px">
-          <a id="signinLink" class="button" href="https://login.mypurecloud.jp/oauth/authorize?client_id=5ad8dc1d-2ee1-41dd-9771-1c0e58f22203&amp;response_type=token&amp;redirect_uri=https%3A%2F%2Fchinarn.github.io%2Femailwizard%2F&amp;state=email_bulk_implicit" target="_self" rel="nofollow noopener">Sign in</a>
-          <noscript><div class="muted" style="margin-top:6px">JavaScript is disabled. Use the button above to sign in.</div></noscript>
+          <!-- Rock-solid authorize link (works even if JS fails) -->
+          <a
+            id="signinLink"
+            class="button"
+            href="https://login.mypurecloud.jp/oauth/authorize?client_id=5ad8dc1d-2ee1-41dd-9771-1c0e58f22203&amp;response_type=token&amp;redirect_uri=https%3A%2F%2Fchinarn.github.io%2Femailwizard%2F&amp;state=email_bulk_implicit"
+            target="_self"
+            rel="nofollow noopener"
+          >Sign in</a>
           <button id="signoutBtn" style="display:none">Sign out</button>
         </div>
       </div>
+
       <div class="content">
         <div class="row">
           <div style="flex:2">
@@ -127,9 +134,9 @@
 
   <script>
     // ======== CONFIG (Preset) ========
-    var REGION_HOST  = 'mypurecloud.jp';
-    var CLIENT_ID    = '5ad8dc1d-2ee1-41dd-9771-1c0e58f22203';
-    var REDIRECT_URI = 'https://chinarn.github.io/emailwizard/'; // must match OAuth app exactly
+    var REGION_HOST  = 'mypurecloud.jp';                             // Tokyo
+    var CLIENT_ID    = '5ad8dc1d-2ee1-41dd-9771-1c0e58f22203';       // your implicit client id
+    var REDIRECT_URI = 'https://chinarn.github.io/emailwizard/';     // must match OAuth app exactly
     var OAUTH_STATE  = 'email_bulk_implicit';
     // =================================
 
@@ -141,26 +148,17 @@
       var t = $('log'); var s = new Date().toLocaleTimeString();
       t.value = (t.value ? t.value + "\n" : "") + s + ' • ' + line;
       t.scrollTop = t.scrollHeight;
+      try { console.log(line); } catch(_){}
     }
     function setError(msg){ $('errors').textContent = msg || ''; }
     function clearError(){ setError(''); }
 
-    function buildAuthUrl(){
-      var base = 'https://login.' + REGION_HOST + '/oauth/authorize';
-      var q = 'client_id=' + encodeURIComponent(CLIENT_ID)
-            + '&response_type=token'
-            + '&redirect_uri=' + encodeURIComponent(REDIRECT_URI)
-            + '&state=' + encodeURIComponent(OAUTH_STATE);
-      return base + '?' + q;
-    }
     function readTokenFromHash(){
       if (!location.hash) return null;
       var p = new URLSearchParams(location.hash.substring(1));
       var t = p.get('access_token');
       var exp = p.get('expires_in');
       return t ? { access_token: t, expires_in: exp ? parseInt(exp,10) : null } : null;
-    }, document.title, window.location.pathname + window.location.search); }
-      return t ? { access_token:t } : null;
     }
 
     function updateSigninState(){
@@ -175,31 +173,50 @@
       $('token').value = token || '';
     }
 
-    // Anchor-based sign-in (less brittle than programmatic nav)
-    function wireSigninLink(){ /* Not needed: anchor is now hard-coded for reliability */ }
+    function filterRows(){
+      var fs = ($('filterSubject').value||'').toLowerCase();
+      var ff = ($('filterFrom').value||'').toLowerCase();
+      var trs = document.querySelectorAll('#rows tr');
+      for (var i=0;i<trs.length;i++){
+        var r = JSON.parse(trs[i].dataset.payload || '{}');
+        var sOk = !fs || ((r.subject||'').toLowerCase().indexOf(fs) !== -1);
+        var fOk = !ff || ((r.from||'').toLowerCase().indexOf(ff) !== -1);
+        trs[i].style.display = (sOk && fOk) ? '' : 'none';
+      }
+    }
 
-    $('signoutBtn').addEventListener('click', function(){ token=''; $('rows').innerHTML=''; $('queueSelect').innerHTML='<option disabled selected>Sign in first</option>'; $('wrapupSelect').innerHTML='<option disabled selected>Select a queue first</option>'; updateSigninState(); $('whoami').textContent=''; $('queueCount').textContent=''; $('log').value=''; $('userSelect').innerHTML='<option value="" disabled selected>Load users…</option>'; });
+    $('signoutBtn').addEventListener('click', function(){
+      token='';
+      $('rows').innerHTML='';
+      $('queueSelect').innerHTML='<option disabled selected>Sign in first</option>';
+      $('wrapupSelect').innerHTML='<option disabled selected>Select a queue first</option>';
+      updateSigninState();
+      $('whoami').textContent='';
+      $('queueCount').textContent='';
+      $('log').value='';
+      $('userSelect').innerHTML='<option value="" disabled selected>Load users…</option>';
+    });
 
     window.addEventListener('error', function(e){ setError(e && e.message ? e.message : 'Script error'); });
     window.addEventListener('unhandledrejection', function(e){ setError('Promise rejection: ' + (e && e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
 
+    // ----- Init: detect token & wire UI -----
     (function init(){
-      log('App loaded. Redirect URI: ' + REDIRECT_URI);
-      wireSigninLink();
+      log('App loaded. Waiting for sign-in or token in URL…');
+
       function handleTokenInUrl(){
         var th = readTokenFromHash();
         if (th && th.access_token){
           token = th.access_token;
           log('Token detected in URL hash.');
           updateSigninState();
-          // Clean the hash AFTER we update UI so user sees token immediately during first paint
-          try{ history.replaceState({}, document.title, window.location.pathname + window.location.search); }catch(_){/* ignore */}
-          if (token) bootstrap();
+          try{ history.replaceState({}, document.title, window.location.pathname); }catch(_){}
+          bootstrap();
         }
       }
-      // Run once now
+      // Handle current URL (in case we landed here with the hash)
       handleTokenInUrl();
-      // And whenever the hash changes
+      // And handle any future hash changes
       window.addEventListener('hashchange', handleTokenInUrl);
 
       // Wire UI actions
@@ -262,14 +279,17 @@
         if (!items.length){ $('wrapupSelect').innerHTML = '<option value="" disabled selected>No wrap-up codes on this queue</option>'; return; }
         items.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
         var html = '<option value="" disabled selected>(choose wrap-up code)</option>';
-        for (var j=0;j<items.length;j++){ html += '<option value="' + items[j].id + '">' + items[j].name + ' — ' + items[j].id + '</option>'; }
+        for (var j=0;j<items.length;j++){ html += '<option value="' + items[j].id + '">' + items[j.name] + '</option>'; }
         $('wrapupSelect').innerHTML = html;
       }catch(e){ setError(e.message || String(e)); $('wrapupSelect').innerHTML = '<option disabled selected>Wrap-up codes unavailable</option>'; }
     }
 
     function selectedRows(){
       var trs = document.querySelectorAll('#rows tr'); var out=[];
-      for (var i=0;i<trs.length;i++){ var tr=trs[i]; var cb=tr.querySelector('input[type="checkbox"]'); if (cb && cb.checked){ out.push(JSON.parse(tr.dataset.payload)); } }
+      for (var i=0;i<trs.length;i++){
+        var tr=trs[i]; var cb=tr.querySelector('input[type="checkbox"]');
+        if (cb && cb.checked){ out.push(JSON.parse(tr.dataset.payload)); }
+      }
       return out;
     }
 
@@ -279,19 +299,51 @@
       try{
         var end = new Date().toISOString();
         var start = new Date(Date.now() - 2*60*60*1000).toISOString();
-        var body = { interval: start + '/' + end, order:'desc', orderBy:'conversationStart', paging:{ pageNumber:1, pageSize:100 }, segmentFilters:[ { type:'and', predicates:[ { type:'dimension', dimension:'queueId', operator:'matches', value: queueId }, { type:'dimension', dimension:'mediaType', operator:'matches', value:'email' } ] } ] };
-        var res = await fetch(baseUrl() + '/api/v2/analytics/conversations/details/query', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+        // queueId is a SEGMENT dimension in analytics
+        var body = {
+          interval: start + '/' + end,
+          order: 'desc',
+          orderBy: 'conversationStart',
+          paging: { pageNumber: 1, pageSize: 100 },
+          segmentFilters: [{
+            type: 'and',
+            predicates: [
+              { type:'dimension', dimension:'queueId', operator:'matches', value: queueId },
+              { type:'dimension', dimension:'mediaType', operator:'matches', value:'email' }
+            ]
+          }]
+        };
+        var res = await fetch(baseUrl() + '/api/v2/analytics/conversations/details/query', {
+          method:'POST',
+          headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+          body: JSON.stringify(body)
+        });
         if (!res.ok){ throw new Error(res.status + ' ' + res.statusText + ': ' + (await res.text())); }
         var data = await res.json();
         var convs = (data && data.conversations) ? data.conversations : [];
+
+        // Build base rows first
         var rows = [];
         for (var i=0;i<convs.length;i++){
-          var c = convs[i]; if (c.conversationEnd) continue; rows.push(marshalRow(c));
+          var c = convs[i];
+          if (c.conversationEnd) continue;
+          rows.push(marshalRow(c));
         }
         for (var r=0;r<rows.length;r++){ addRow(rows[r]); }
+
+        // Enrich each row via /conversations/emails/{conversationId}
+        await bulkEnrichRows();
+
         log('Loaded ' + rows.length + ' in-progress emails');
-        $('checkAll').checked = false; filterRows();
+        $('checkAll').checked = false;
+        filterRows();
       }catch(e){ setError(e.message || String(e)); }
+    }
+
+    function firstEmailLeg(p){
+      var s = (p && (p.sessions||p.communications)) || [];
+      for (var i=0;i<s.length;i++){ if (s[i] && s[i].mediaType === 'email') return s[i]; }
+      return null;
     }
 
     function marshalRow(c){
@@ -303,9 +355,8 @@
         else if (p.purpose === 'agent' || p.purpose === 'user') agent = p;
         else if (p.purpose === 'acd') acd = p;
       }
-      function firstEmailSess(p){ var s = (p && (p.sessions||p.communications)) || []; for (var i=0;i<s.length;i++){ if (s[i] && s[i].mediaType === 'email') return s[i]; } return null; }
-      var aSess = firstEmailSess(agent);
-      var acdSess = firstEmailSess(acd);
+      var aSess = firstEmailLeg(agent);
+      var acdSess = firstEmailLeg(acd);
       var comm = aSess || acdSess || null;
       return {
         conversationId: c.conversationId,
@@ -320,7 +371,8 @@
 
     function addRow(r){
       var tr = document.createElement('tr');
-      tr.innerHTML = '<td><input type="checkbox"></td>'+
+      tr.innerHTML =
+        '<td><input type="checkbox"></td>'+
         '<td class="cell-subject">' + esc(r.subject||'') + '</td>'+
         '<td class="cell-from">' + esc(r.from||'') + '</td>'+
         '<td class="mono">' + esc(r.conversationId) + '</td>'+
@@ -328,19 +380,91 @@
         '<td class="mono">' + esc(r.emailCommId || '') + '</td>';
       tr.dataset.payload = JSON.stringify(r);
       $('rows').appendChild(tr);
-      if (!r.subject || !r.from) enrichRowDetails(r.conversationId, tr);
     }
 
-    function esc(s){ return (s||'').toString().replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]; }); }
+    function esc(s){
+      return (s||'').toString().replace(/[&<>"']/g, function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c];
+      });
+    }
 
+    // ----- Enrichment using /conversations/emails/{conversationId} -----
+    async function enrichRowDetails(conversationId, tr){
+      try{
+        var detail = null;
+        try { detail = await api('/api/v2/conversations/emails/' + conversationId); } catch(_){}
+        if (!detail || !detail.participants){ detail = await api('/api/v2/conversations/' + conversationId); }
+
+        var parts = (detail && detail.participants) || [];
+        var external=null, customer=null, agent=null, acd=null;
+        for (var i=0;i<parts.length;i++){
+          var p=parts[i];
+          if (p.purpose==='external') external=p;
+          else if (p.purpose==='customer') customer=p;
+          else if (p.purpose==='agent' || p.purpose==='user') agent=p;
+          else if (p.purpose==='acd') acd=p;
+        }
+        function firstEmailLeg(pp){
+          var sacks=(pp && (pp.sessions||pp.communications))||[];
+          for (var k=0;k<sacks.length;k++){ var s=sacks[k]; if (s && s.mediaType==='email') return s; }
+          return null;
+        }
+        var aLeg = firstEmailLeg(agent);
+        var qLeg = firstEmailLeg(acd);
+        var subj = (aLeg && (aLeg.subject||aLeg.emailSubject)) || (qLeg && (qLeg.subject||qLeg.emailSubject)) ||
+                   (aLeg && aLeg.headers && (aLeg.headers.subject||aLeg.headers.Subject)) ||
+                   (qLeg && qLeg.headers && (qLeg.headers.subject||qLeg.headers.Subject)) ||
+                   (aLeg && aLeg.additionalProperties && (aLeg.additionalProperties.subject||aLeg.additionalProperties.Subject)) ||
+                   (qLeg && qLeg.additionalProperties && (qLeg.additionalProperties.subject||qLeg.additionalProperties.Subject)) || '';
+        var from = (aLeg && (aLeg.fromAddress||aLeg.fromEmail||aLeg.from)) || (qLeg && (qLeg.fromAddress||qLeg.fromEmail||qLeg.from)) ||
+                   (external && (external.address||external.email||external.name)) || (customer && (customer.address||customer.email||customer.name)) || '';
+        var commId = (aLeg && (aLeg.id||aLeg.sessionId||aLeg.communicationId)) || (qLeg && (qLeg.id||qLeg.sessionId||qLeg.communicationId)) || null;
+
+        if (subj) tr.querySelector('.cell-subject').textContent = subj;
+        if (from) tr.querySelector('.cell-from').textContent = from;
+
+        var r = JSON.parse(tr.dataset.payload || '{}');
+        r.subject = subj || r.subject;
+        r.from    = from || r.from;
+        r.emailCommId        = commId || r.emailCommId;
+        r.agentParticipantId = r.agentParticipantId || (agent && (agent.participantId || agent.id)) || null;
+        r.acdParticipantId   = r.acdParticipantId   || (acd   && (acd.participantId   || acd.id))   || null;
+        r.owner              = r.owner || (aLeg ? 'agent' : (qLeg ? 'acd' : null));
+        tr.dataset.payload   = JSON.stringify(r);
+      }catch(e){ /* ignore enrichment failures */ }
+    }
+
+    async function bulkEnrichRows(){
+      var trs = Array.from(document.querySelectorAll('#rows tr'));
+      var tasks = trs.filter(function(tr){
+        try { var r = JSON.parse(tr.dataset.payload||'{}'); return !(r.subject && r.from); } catch(_) { return true; }
+      });
+
+      var idx = 0, max = tasks.length, concurrency = 5;
+      async function worker(){
+        while(true){
+          var i = idx++; if (i >= max) break;
+          var tr = tasks[i]; var r = JSON.parse(tr.dataset.payload||'{}');
+          await enrichRowDetails(r.conversationId, tr);
+        }
+      }
+      await Promise.all(new Array(concurrency).fill(0).map(worker));
+    }
+
+    // ----- Actions -----
     async function assignToMe(){
       var sel = selectedRows(); if (!sel.length){ log('Select at least one row'); return; }
       try{
         var me = await api('/api/v2/users/me'); var ok=0, fail=0;
         for (var i=0;i<sel.length;i++){
-          var r = sel[i]; try{
+          var r = sel[i];
+          try{
             var holder = r.agentParticipantId || r.acdParticipantId; if (!holder){ fail++; continue; }
-            var res = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + holder + '/replace', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ userId: me.id, transferType:'Unattended' }) });
+            var res = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + holder + '/replace', {
+              method:'POST',
+              headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+              body: JSON.stringify({ userId: me.id, transferType:'Unattended' })
+            });
             if (!res.ok) throw new Error(await res.text()); ok++;
           }catch(e){ fail++; }
         }
@@ -371,9 +495,14 @@
       var sel = selectedRows(); if (!sel.length){ log('Select at least one row'); return; }
       var ok=0, fail=0;
       for (var i=0;i<sel.length;i++){
-        var r = sel[i]; try{
+        var r = sel[i];
+        try{
           var holder = r.agentParticipantId || r.acdParticipantId; if (!holder){ fail++; continue; }
-          var res = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + holder + '/replace', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ userId: userId, transferType:'Unattended' }) });
+          var res = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + holder + '/replace', {
+            method:'POST',
+            headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+            body: JSON.stringify({ userId: userId, transferType:'Unattended' })
+          });
           if (!res.ok) throw new Error(await res.text()); ok++;
         }catch(e){ fail++; }
       }
@@ -386,7 +515,8 @@
       var sel = selectedRows(); if (!sel.length){ log('Select at least one row'); return; }
       var ok=0, fail=0;
       for (var i=0;i<sel.length;i++){
-        var r = sel[i]; try{
+        var r = sel[i];
+        try{
           var participantId = r.owner === 'agent' ? r.agentParticipantId : (r.acdParticipantId || r.agentParticipantId || r.acdParticipantId);
           var commId = r.emailCommId;
           if (!commId){
@@ -396,64 +526,27 @@
             var sacks = (p && (p.communications || p.sessions)) || [];
             for (var s=0;s<sacks.length;s++){ var x=sacks[s]; if (x && x.mediaType==='email'){ commId = x.id || x.sessionId || x.communicationId; if (commId) break; } }
           }
-          if (!participantId || !commId){ log('Conversation ' + r.conversationId + ': could not locate an email leg on agent/ACD participant.'); fail++; continue; }
-          var w = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + participantId + '/communications/' + commId + '/wrapup', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ code: codeId }) });
+          if (!participantId || !commId){
+            log('Conversation ' + r.conversationId + ': could not locate an email leg on agent/ACD participant.');
+            fail++; continue;
+          }
+          var w = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + participantId + '/communications/' + commId + '/wrapup', {
+            method:'POST',
+            headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+            body: JSON.stringify({ code: codeId })
+          });
           if (!w.ok) throw new Error(await w.text());
-          var d = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + participantId, { method:'PATCH', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ state:'disconnected' }) });
+          var d = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + participantId, {
+            method:'PATCH',
+            headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' },
+            body: JSON.stringify({ state:'disconnected' })
+          });
           if (!d.ok) throw new Error(await d.text());
           ok++;
         }catch(e){ fail++; }
       }
       log('Wrap-up + disconnect done. Success: ' + ok + ', Failed: ' + fail);
       await refreshEmails();
-    }
-
-    async function enrichRowDetails(conversationId, tr){
-      try{
-        // Prefer the email-specific endpoint for reliable subject/from
-        var detail = null;
-        try { detail = await api('/api/v2/conversations/emails/' + conversationId); } catch(_){ /* fall back below */ }
-        if (!detail || !detail.participants){ detail = await api('/api/v2/conversations/' + conversationId); }
-
-        var parts = (detail && detail.participants) || [];
-        var external=null, customer=null, agent=null, acd=null;
-        for (var i=0;i<parts.length;i++){
-          var p=parts[i];
-          if (p.purpose==='external') external=p; else if (p.purpose==='customer') customer=p; else if (p.purpose==='agent' || p.purpose==='user') agent=p; else if (p.purpose==='acd') acd=p;
-        }
-        function firstEmailLeg(pp){ var sacks=(pp && (pp.sessions||pp.communications))||[]; for (var k=0;k<sacks.length;k++){ var s=sacks[k]; if (s && s.mediaType==='email') return s; } return null; }
-        var aLeg = firstEmailLeg(agent); var qLeg = firstEmailLeg(acd);
-        var subj = (aLeg && (aLeg.subject||aLeg.emailSubject)) || (qLeg && (qLeg.subject||qLeg.emailSubject)) ||
-                   (aLeg && aLeg.headers && (aLeg.headers.subject||aLeg.headers.Subject)) ||
-                   (qLeg && qLeg.headers && (qLeg.headers.subject||qLeg.headers.Subject)) ||
-                   (aLeg && aLeg.additionalProperties && (aLeg.additionalProperties.subject||aLeg.additionalProperties.Subject)) ||
-                   (qLeg && qLeg.additionalProperties && (qLeg.additionalProperties.subject||qLeg.additionalProperties.Subject)) || '';
-        var from = (aLeg && (aLeg.fromAddress||aLeg.fromEmail||aLeg.from)) || (qLeg && (qLeg.fromAddress||qLeg.fromEmail||qLeg.from)) ||
-                   (external && (external.address||external.email||external.name)) || (customer && (customer.address||customer.email||customer.name)) || '';
-        var commId = (aLeg && (aLeg.id||aLeg.sessionId||aLeg.communicationId)) || (qLeg && (qLeg.id||qLeg.sessionId||qLeg.communicationId)) || null;
-
-        if (subj) tr.querySelector('.cell-subject').textContent = subj;
-        if (from) tr.querySelector('.cell-from').textContent = from;
-        var r = JSON.parse(tr.dataset.payload || '{}');
-        r.subject = subj || r.subject; r.from = from || r.from; r.emailCommId = commId || r.emailCommId;
-        if (!r.agentParticipantId && agent) r.agentParticipantId = agent.participantId || agent.id || null;
-        if (!r.acdParticipantId && acd) r.acdParticipantId = acd.participantId || acd.id || null;
-        r.owner = r.owner || (aLeg ? 'agent' : (qLeg ? 'acd' : null));
-        tr.dataset.payload = JSON.stringify(r);
-        if (typeof filterRows === 'function') filterRows();
-      }catch(e){ /* ignore enrichment failures */ }
-    }
-
-    function filterRows(){
-      var fs = ($('filterSubject').value||'').toLowerCase();
-      var ff = ($('filterFrom').value||'').toLowerCase();
-      var trs = document.querySelectorAll('#rows tr');
-      for (var i=0;i<trs.length;i++){
-        var r = JSON.parse(trs[i].dataset.payload || '{}');
-        var sOk = !fs || ((r.subject||'').toLowerCase().indexOf(fs) !== -1);
-        var fOk = !ff || ((r.from||'').toLowerCase().indexOf(ff) !== -1);
-        trs[i].style.display = (sOk && fOk) ? '' : 'none';
-      }
     }
   </script>
 </body>
