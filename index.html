@@ -31,6 +31,27 @@
     th { text-align:left; color: var(--muted); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
   </style>
+  <script>
+    // Early bootstrap (separate from main app). This will run even if later script has a syntax error.
+    (function(){
+      function stamp(msg){ try{ console.log(msg); var t=document.getElementById('log'); if(t){ var s=new Date().toLocaleTimeString(); t.value=(t.value? t.value+"\n":"")+s+" • "+msg; t.scrollTop=t.scrollHeight; } }catch(_){} }
+      window.addEventListener('error', function(e){ stamp('Early ERROR: ' + (e && e.message ? e.message : String(e))); });
+      window.addEventListener('DOMContentLoaded', function(){ stamp('Early bootstrap OK: DOM ready'); });
+      // Provide a minimal, always-available click handler as a fallback
+      window.__signinClick = function(){
+        try {
+          // Pull constants from data-* or fall back to typical values
+          var btn = document.getElementById('signinBtn');
+          var REGION = (btn && btn.getAttribute('data-region')) || 'mypurecloud.jp';
+          var CID    = (btn && btn.getAttribute('data-client')) || '5ad8dc1d-2ee1-41dd-9771-1c0e58f22203';
+          var REDIR  = (btn && btn.getAttribute('data-redirect')) || (window.location.origin + window.location.pathname);
+          var url = 'https://login.'+REGION+'/oauth/authorize?client_id='+encodeURIComponent(CID)+'&response_type=token&redirect_uri='+encodeURIComponent(REDIR)+'&state=email_bulk_implicit';
+          stamp('Fallback navigating to: '+url);
+          window.location.assign(url);
+        } catch(err){ stamp('Fallback signin failed: '+(err && err.message ? err.message : String(err))); }
+      };
+    })();
+  </script>
 </head>
 <body>
   <div class="banner"><strong>Implicit Grant</strong> — Preset Region & Client; queues loaded from API</div>
@@ -39,7 +60,7 @@
       <div class="header">
         <div class="title">Email Bulk Actions</div>
         <div class="row" style="max-width:520px">
-          <button id="signinBtn" class="nowrap">Sign in with Genesys Cloud</button>
+          <button id="signinBtn" class="nowrap" data-region="mypurecloud.jp" data-client="5ad8dc1d-2ee1-41dd-9771-1c0e58f22203" onclick="__signinClick()">Sign in with Genesys Cloud</button>
           <button id="signoutBtn" class="nowrap" style="display:none">Sign out</button>
         </div>
       </div>
