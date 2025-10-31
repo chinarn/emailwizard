@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Genesys Cloud – Email Queue Bulk Actions</title>
+  <style>
+    :root { --bg:#0b1020; --fg:#e8ecf6; --muted:#9aa3b2; --accent:#7cc4ff; --card:#141a33; --good:#2cab5f; --bad:#ff5d73; }
+    html,body { background: var(--bg); color: var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; margin:0; }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    .card { background: var(--card); border-radius: 14px; padding: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.25); margin-bottom: 14px; }
+    label { font-size: 12px; color: var(--muted); display:block; margin-bottom:6px; }
+    input, select { background: #0e1430; color: var(--fg); border: 1px solid #2a335b; border-radius: 8px; padding: 8px 10px; outline: none; width: 100%; }
+    input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,196,255,.18); }
+    .row { display: grid; grid-template-columns: repeat(12, 1fr); gap: 10px; }
+    .col-3 { grid-column: span 3; }
+    .col-4 { grid-column: span 4; }
+    .col-6 { grid-column: span 6; }
+    .col-9 { grid-column: span 9; }
+    .btn { background: #1e2650; border: 1px solid #2d3a73; color: var(--fg); border-radius: 10px; padding: 8px 12px; cursor:pointer; }
+    .btn:hover { background: #233064; }
+    .btn-primary { background: #244fa7; border-color: #3569db; }
+    .btn-primary:hover { background: #2a5bcc; }
+    .btn-good { background: var(--good); border-color: #2cab5f; }
+    .btn-bad { background: #a8243a; border-color: #e24963; }
+    .flex { display:flex; gap: 8px; align-items:center; flex-wrap: wrap; }
+    .muted { color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 6px; border-bottom: 1px solid #2a335b; vertical-align: top; }
+    th { text-align: left; color: var(--muted); font-weight: 600; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .pill { display:inline-flex; padding: 2px 8px; font-size: 11px; border-radius: 999px; background: #1f2b59; border: 1px solid #31407a; color: #cbd6ff; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; padding: 2px 6px; border-radius: 6px; background: #0d132b; border: 1px solid #27305a; }
+    .hint { font-size: 12px; color: var(--muted); }
+    .error { color: var(--bad); }
+    .ok { color: var(--good); }
+    .divider { height:1px; background:#2a335b; margin:8px 0; }
+    details summary { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Genesys Cloud – Email Queue Bulk Actions</h1>
+
+    <div class="card">
+      <div class="row">
+        <div class="col-3">
+          <label>Environment (region)</label>
+          <input id="env" value="mypurecloud.com" />
+          <div class="hint">e.g. <span class="kbd">mypurecloud.com</span>, <span class="kbd">mypurecloud.ie</span>, <span class="kbd">apne2.pure.cloud</span></div>
+        </div>
+        <div class="col-6">
+          <label>OAuth Client ID (Implicit)</label>
+          <input id="clientId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+        </div>
+        <div class="col-3">
+          <label>Redirect URI</label>
+          <input id="redirectUri" />
+          <div class="hint">Must exactly match an allowed redirect in your OAuth client.</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px; align-items:end;">
+        <div class="col-9">
+          <label>Queue IDs (comma-separated)</label>
+          <input id="queueIds" placeholder="1111-queue-guid,2222-queue-guid" />
+        </div>
+        <div class="col-3">
+          <button class="btn btn-primary" id="btnLogin">Authenticate</button>
+        </div>
+      </div>
+      <div id="status" class="hint" style="margin-top:8px;">Not authenticated</div>
+    </div>
+
+    <div class="card">
+      <div class="flex" style="justify-content: space-between;">
+        <div class="flex">
+          <button class="btn" id="btnRefresh">Refresh</button>
+          <button class="btn btn-good" id="btnAssignMe">Assign to me</button>
+          <div class="flex">
+            <input id="targetUserId" style="width:260px" placeholder="Target userId for transfer" />
+            <button class="btn" id="btnTransfer">Transfer to user</button>
+          </div>
+          <div class="flex">
+            <select id="wrapupSelect" style="width:240px"></select>
+            <button class="btn btn-bad" id="btnWrapDisconnect">Wrap-up + Disconnect</button>
+          </div>
+        </div>
+        <div id="whoami" class="muted"></div>
+      </div>
+      <div class="divider"></div>
+      <div class="flex">
+        <div class="pill">Last 2 hours</div>
+        <div class="hint">Showing in-progress email conversations in the selected queues.</div>
+      </div>
+      <div style="overflow:auto; max-height: 55vh; margin-top:10px;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px;"><input type="checkbox" id="checkAll"></th>
+              <th>Subject</th>
+              <th>From</th>
+              <th>Queue</th>
+              <th>State</th>
+              <th>ConversationId</th>
+              <th>Agent/ACD ParticipantId</th>
+              <th>CommId</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div id="log" class="hint" style="margin-top:8px;"></div>
+      <details style="margin-top:8px;">
+        <summary class="muted">Notes & Tips</summary>
+        <ul class="hint">
+          <li>If an email has no <b>agent participant</b> yet, "Assign to me" (or transfer to a user) first, then apply wrap-up + disconnect.</li>
+          <li>Wrap-up is applied at the <b>communication level</b> for the agent participant, then we disconnect that participant.</li>
+          <li>Use the queue dropdown to fetch wrap-up codes associated with that queue (or pick from all codes).</li>
+        </ul>
+      </details>
+    </div>
+  </div>
+
+  <!-- Genesys Cloud SDKs via CDN -->
+  <script src="https://unpkg.com/genesys-cloud-client-auth/dist/genesys-cloud-client-auth.min.js"></script>
+  <script src="https://unpkg.com/purecloud-platform-client-v2/dist/purecloud-platform-client-v2.min.js"></script>
+
+  <script>
+    const pc = platformClient; // global from CDN
+
+    const els = {
+      env: document.getElementById('env'),
+      clientId: document.getElementById('clientId'),
+      redirectUri: document.getElementById('redirectUri'),
+      queueIds: document.getElementById('queueIds'),
+      btnLogin: document.getElementById('btnLogin'),
+      status: document.getElementById('status'),
+      btnRefresh: document.getElementById('btnRefresh'),
+      btnAssignMe: document.getElementById('btnAssignMe'),
+      btnTransfer: document.getElementById('btnTransfer'),
+      targetUserId: document.getElementById('targetUserId'),
+      btnWrapDisconnect: document.getElementById('btnWrapDisconnect'),
+      rows: document.getElementById('rows'),
+      checkAll: document.getElementById('checkAll'),
+      log: document.getElementById('log'),
+      whoami: document.getElementById('whoami'),
+      wrapupSelect: document.getElementById('wrapupSelect'),
+    };
+
+    let gcAuth = null;
+    let client = pc.ApiClient.instance;
+    let analyticsApi = null;
+    let conversationsApi = null;
+    let usersApi = null;
+    let routingApi = null;
+    let me = null;
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    function setStatus(msg, ok=false) { els.status.textContent = msg; els.status.className = ok ? 'ok hint' : 'error hint'; }
+    function log(msg) { els.log.textContent = msg; }
+
+    function parseQueuesInput() {
+      return els.queueIds.value.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    async function authenticate() {
+      try {
+        const env = els.env.value.trim();
+        const clientId = els.clientId.value.trim();
+        const redirectUri = els.redirectUri.value.trim() || window.location.href;
+        if (!env || !clientId) { setStatus('Please provide Environment and Client ID'); return; }
+
+        // Initialize popup-friendly implicit grant for embedded or standalone usage
+        gcAuth = new window.GCAuth({ // GCAuth from genesys-cloud-client-auth
+          clientId,
+          redirectUri,
+          environment: env,
+          popup: true
+        });
+
+        setStatus('Opening login…');
+        const { accessToken, tokenExpiryTime } = await gcAuth.login();
+
+        client.setEnvironment(env);
+        client.setAccessToken(accessToken);
+
+        analyticsApi = new pc.AnalyticsApi();
+        conversationsApi = new pc.ConversationsApi();
+        usersApi = new pc.UsersApi();
+        routingApi = new pc.RoutingApi();
+
+        me = await usersApi.getUsersMe();
+        els.whoami.textContent = `Signed in as ${me.name} (${me.id}) · Token expires ${new Date(tokenExpiryTime).toLocaleString()}`;
+        setStatus('Authenticated', true);
+
+        await loadWrapupCodes();
+        await refresh();
+      } catch (e) {
+        console.error(e);
+        setStatus('Auth failed: ' + (e && e.message ? e.message : e));
+      }
+    }
+
+    async function loadWrapupCodes() {
+      // Try to load wrap-up codes for the FIRST queue if provided, else load a global list
+      try {
+        const qIds = parseQueuesInput();
+        let codes = [];
+        if (qIds.length) {
+          try {
+            const q = await routingApi.getRoutingQueue(qIds[0], { expand: ['wrapupcodes'] });
+            // Some regions return wrap-up codes under different shapes; fall back to global list
+            if (q && q.wrapupCodes && Array.isArray(q.wrapupCodes)) {
+              codes = q.wrapupCodes;
+            }
+          } catch(_) { /* ignore; fall back */ }
+        }
+        if (!codes.length) {
+          // fallback: list first 200 global wrap-up codes
+          const page = await routingApi.getRoutingWrapupcodes({ pageSize: 200 });
+          codes = page && page.entities ? page.entities : [];
+        }
+        els.wrapupSelect.innerHTML = '';
+        const opt0 = document.createElement('option');
+        opt0.value = ''; opt0.textContent = '(choose wrap-up code)';
+        els.wrapupSelect.appendChild(opt0);
+        codes.forEach(c => {
+          const o = document.createElement('option');
+          o.value = c.id; o.textContent = `${c.name} — ${c.id}`;
+          els.wrapupSelect.appendChild(o);
+        });
+      } catch (e) {
+        console.warn('Wrap-up codes load failed:', e.message);
+        els.wrapupSelect.innerHTML = '<option value="">(wrap-up codes unavailable)</option>';
+      }
+    }
+
+    async function refresh() {
+      els.rows.innerHTML = '';
+      log('Loading…');
+      const end = new Date().toISOString();
+      const start = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(); // last 2 hours
+      const qIds = parseQueuesInput();
+      if (!qIds.length) { log('Add at least one Queue ID, then Refresh.'); return; }
+
+      const body = {
+        interval: `${start}/${end}`,
+        order: 'desc',
+        orderBy: 'conversationStart',
+        paging: { pageNumber: 1, pageSize: 100 },
+        conversationFilters: [
+          { type: 'or', predicates: qIds.map(q => ({ type: 'dimension', dimension: 'queueId', operator: 'matches', value: q })) },
+          { type: 'and', predicates: [{ type: 'dimension', dimension: 'mediaType', operator: 'matches', value: 'email' }] }
+        ]
+      };
+
+      const res = await analyticsApi.postAnalyticsConversationsDetailsQuery(body);
+      const rows = (res.conversations || [])
+        .filter(c => !c.conversationEnd)
+        .map(c => marshalRow(c));
+
+      rows.forEach(addRow);
+      log(`Loaded ${rows.length} in-progress emails`);
+      els.checkAll.checked = false;
+    }
+
+    function marshalRow(c) {
+      const parts = c.participants || [];
+      const external = parts.find(p => p.purpose === 'external');
+      const agent = parts.find(p => p.purpose === 'agent' || p.purpose === 'user');
+      const acd = parts.find(p => p.purpose === 'acd');
+      const agentEmailSess = agent && (agent.sessions || []).find(s => s.mediaType === 'email');
+      const acdEmailSess = acd && (acd.sessions || []).find(s => s.mediaType === 'email');
+      const comm = agentEmailSess || acdEmailSess || null;
+      return {
+        conversationId: c.conversationId,
+        subject: comm && (comm.subject || comm.emailSubject) || '(no subject)',
+        from: external && external.address || '',
+        queueName: (acd && acd.queueName) || (agent && agent.queueName) || '',
+        state: (agent && agent.segmentType) || (acd && acd.segmentType) || '',
+        agentParticipantId: agent && agent.participantId || null,
+        acdParticipantId: acd && acd.participantId || null,
+        emailCommId: comm && (comm.sessionId || comm.communicationId) || null,
+      };
+    }
+
+    function addRow(r) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="checkbox" class="pick"></td>
+        <td>${esc(r.subject)}</td>
+        <td>${esc(r.from)}</td>
+        <td>${esc(r.queueName)}</td>
+        <td>${esc(r.state || '')}</td>
+        <td class="mono">${esc(r.conversationId)}</td>
+        <td class="mono">${esc(r.agentParticipantId || r.acdParticipantId || '')}</td>
+        <td class="mono">${esc(r.emailCommId || '')}</td>
+      `;
+      tr.dataset.payload = JSON.stringify(r);
+      els.rows.appendChild(tr);
+    }
+
+    function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+    function picks() {
+      return Array.from(els.rows.querySelectorAll('tr'))
+        .filter(tr => tr.querySelector('.pick').checked)
+        .map(tr => JSON.parse(tr.dataset.payload));
+    }
+
+    async function wrapDisconnect() {
+      const codeId = els.wrapupSelect.value;
+      if (!codeId) { log('Choose a wrap-up code first.'); return; }
+      const sel = picks();
+      if (!sel.length) { log('Select at least one row.'); return; }
+      let ok = 0, fail = 0;
+      for (const r of sel) {
+        try {
+          // Ensure we operate on an agent participant with an email communication
+          let participantId = r.agentParticipantId;
+          let commId = r.emailCommId;
+          if (!participantId || !commId) {
+            // If not assigned, require transfer to me (or a user) first
+            log(`Conversation ${r.conversationId}: no agent participant/comm. Skipping (assign to user first).`);
+            fail++; continue;
+          }
+          await conversationsApi.postConversationsEmailParticipantCommunicationWrapup(
+            r.conversationId, participantId, commId, { code: codeId }
+          );
+          await conversationsApi.patchConversationsEmailParticipant(
+            r.conversationId, participantId, { state: 'disconnected' }
+          );
+          ok++;
+        } catch(e) { console.error(e); fail++; }
+        await sleep(120);
+      }
+      log(`Wrap-up + disconnect done. Success: ${ok}, Failed: ${fail}`);
+      await refresh();
+    }
+
+    async function assignToMe() {
+      if (!me) { log('Not authenticated.'); return; }
+      const sel = picks();
+      if (!sel.length) { log('Select at least one row.'); return; }
+      let ok = 0, fail = 0;
+      for (const r of sel) {
+        try {
+          const holder = r.agentParticipantId || r.acdParticipantId; // replace whoever holds it
+          if (!holder) { fail++; continue; }
+          await conversationsApi.postConversationsEmailParticipantReplace(
+            r.conversationId, holder, { userId: me.id, transferType: 'Unattended' }
+          );
+          ok++;
+        } catch(e) { console.error(e); fail++; }
+        await sleep(120);
+      }
+      log(`Assign to me done. Success: ${ok}, Failed: ${fail}`);
+      await refresh();
+    }
+
+    async function transferToUser() {
+      const userId = els.targetUserId.value.trim();
+      if (!userId) { log('Enter a target userId'); return; }
+      const sel = picks();
+      if (!sel.length) { log('Select at least one row.'); return; }
+      let ok = 0, fail = 0;
+      for (const r of sel) {
+        try {
+          const holder = r.agentParticipantId || r.acdParticipantId;
+          if (!holder) { fail++; continue; }
+          await conversationsApi.postConversationsEmailParticipantReplace(
+            r.conversationId, holder, { userId, transferType: 'Unattended' }
+          );
+          ok++;
+        } catch(e) { console.error(e); fail++; }
+        await sleep(120);
+      }
+      log(`Transfer done. Success: ${ok}, Failed: ${fail}`);
+      await refresh();
+    }
+
+    // UI wiring
+    els.btnLogin.addEventListener('click', authenticate);
+    els.btnRefresh.addEventListener('click', refresh);
+    els.btnAssignMe.addEventListener('click', assignToMe);
+    els.btnTransfer.addEventListener('click', transferToUser);
+    els.btnWrapDisconnect.addEventListener('click', wrapDisconnect);
+    els.checkAll.addEventListener('change', (e) => {
+      els.rows.querySelectorAll('.pick').forEach(cb => cb.checked = e.target.checked);
+    });
+
+    // If the page URL already contains clientId/env/redirect/queues, prefill
+    (function prefillFromQuery(){
+      const p = new URLSearchParams(location.search);
+      if (p.get('env')) els.env.value = p.get('env');
+      if (p.get('clientId')) els.clientId.value = p.get('clientId');
+      if (p.get('redirectUri')) els.redirectUri.value = p.get('redirectUri');
+      if (p.get('queues')) els.queueIds.value = p.get('queues');
+    })();
+  </script>
+</body>
+</html>
