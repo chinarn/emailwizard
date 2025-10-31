@@ -1,6 +1,4 @@
-<td>${esc(r.from)}</td>
-        <td class="mono">${esc(r.conversationId)}</td>
-        <td class="mono">${esc(r.agentParticipantId || r.acdParticipantId || '')}</td><!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -159,10 +157,11 @@
       var signedIn = !!token;
       $("signinBtn").style.display = signedIn ? "none" : "inline-block";
       $("signoutBtn").style.display = signedIn ? "inline-block" : "none";
-      ["refreshBtn","assignMeBtn","transferBtn"].forEach(id => $(id).disabled = !signedIn);
+      ["refreshBtn","assignMeBtn","transferBtn","loadUsersBtn"].forEach(id => $(id).disabled = !signedIn);
       $("queueSelect").disabled = !signedIn;
       $("wrapupSelect").disabled = !signedIn || !$("queueSelect").value;
       $("wrapDiscBtn").disabled = !signedIn || !$("queueSelect").value;
+      $("userSelect").disabled = !signedIn;
       $("token").value = token || "";
     }
 
@@ -171,7 +170,7 @@
       if (!location.href.startsWith(REDIRECT_URI)) { location.href = REDIRECT_URI; return; }
       location.href = buildAuthUrl();
     });
-    $("signoutBtn").addEventListener("click", function(){ token=""; $("rows").innerHTML=""; $("queueSelect").innerHTML='<option disabled selected>Sign in first</option>'; $("wrapupSelect").innerHTML='<option disabled selected>Select a queue first</option>'; updateSigninState(); $("whoami").textContent=""; $("queueCount").textContent=""; $("log").value=""; });
+    $("signoutBtn").addEventListener("click", function(){ token=""; $("rows").innerHTML=""; $("queueSelect").innerHTML='<option disabled selected>Sign in first</option>'; $("wrapupSelect").innerHTML='<option disabled selected>Select a queue first</option>'; updateSigninState(); $("whoami").textContent=""; $("queueCount").textContent=""; $("log").value=""; $("userSelect").innerHTML='<option value="" disabled selected>Load users…</option>'; });
 
     window.addEventListener("error", function(e){ setError((e&&e.message)? e.message: "Script error"); });
     window.addEventListener("unhandledrejection", function(e){ setError("Promise rejection: " + (e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
@@ -181,15 +180,15 @@
       if (th) { token = th.access_token; }
       updateSigninState();
       if (token) bootstrap();
-      $("queueSelect").addEventListener("change", function(){ loadWrapupsForQueue(this.value); $("wrapupSelect").disabled = !this.value; $("wrapDiscBtn").disabled = !this.value; filterRows(); }); $("wrapupSelect").disabled = !this.value; $("wrapDiscBtn").disabled = !this.value; });
+      $("queueSelect").addEventListener("change", function(){ loadWrapupsForQueue(this.value); $("wrapupSelect").disabled = !this.value; $("wrapDiscBtn").disabled = !this.value; filterRows(); });
       $("refreshBtn").addEventListener("click", refreshEmails);
-      $("filterSubject").addEventListener("input", filterRows);
-      $("filterFrom").addEventListener("input", filterRows);
-      $("loadUsersBtn").addEventListener("click", loadUsers);
       $("assignMeBtn").addEventListener("click", assignToMe);
       $("transferBtn").addEventListener("click", transferToUser);
+      $("loadUsersBtn").addEventListener("click", loadUsers);
       $("wrapDiscBtn").addEventListener("click", wrapupAndDisconnect);
       $("checkAll").addEventListener("change", function(e){ document.querySelectorAll('#rows input[type="checkbox"]').forEach(cb => cb.checked = e.target.checked); });
+      $("filterSubject").addEventListener("input", filterRows);
+      $("filterFrom").addEventListener("input", filterRows);
     })();
 
     async function api(path, init){
@@ -207,7 +206,6 @@
         $("loadUsersBtn").disabled = false;
         await loadQueues();
       } catch(e){ setError(e.message||String(e)); }
-    }
     }
 
     async function loadQueues(){
@@ -230,19 +228,14 @@
     async function loadWrapupsForQueue(queueId){
       $("wrapupSelect").innerHTML = '<option value="" disabled selected>Loading…</option>';
       try {
-        // Retrieve ONLY the wrap-up codes assigned to this queue via the subresource
-        // This avoids rely-on-expand differences across regions/SDKs and respects paging.
+        // Only codes assigned to this queue
         var items = []; var page=1, pageSize=100, data;
         do {
           data = await api(`/api/v2/routing/queues/${queueId}/wrapupcodes?pageSize=${pageSize}&pageNumber=${page}`);
           if (data && Array.isArray(data.entities)) { data.entities.forEach(c => items.push({ id:c.id, name:c.name })); }
           page++;
         } while (data && data.pageCount && page <= data.pageCount);
-
-        if (!items.length){
-          $("wrapupSelect").innerHTML = '<option value="" disabled selected>No wrap-up codes on this queue</option>';
-          return;
-        }
+        if (!items.length){ $("wrapupSelect").innerHTML = '<option value="" disabled selected>No wrap-up codes on this queue</option>'; return; }
         items.sort((a,b)=>a.name.localeCompare(b.name));
         $("wrapupSelect").innerHTML = ['<option value="" disabled selected>(choose wrap-up code)</option>']
           .concat(items.map(c=>`<option value="${c.id}">${c.name} — ${c.id}</option>`)).join("");
@@ -257,22 +250,8 @@
       try {
         var end = new Date().toISOString();
         var start = new Date(Date.now() - 2*60*60*1000).toISOString();
-        // NOTE: queueId is a SEGMENT dimension (not a conversation dimension)
-        var body = {
-          interval: `${start}/${end}`,
-          order: 'desc',
-          orderBy: 'conversationStart',
-          paging: { pageNumber: 1, pageSize: 100 },
-          segmentFilters: [
-            {
-              type: 'and',
-              predicates: [
-                { type:'dimension', dimension:'queueId', operator:'matches', value: queueId },
-                { type:'dimension', dimension:'mediaType', operator:'matches', value:'email' }
-              ]
-            }
-          ]
-        };
+        // queueId is a SEGMENT dimension
+        var body = { interval: `${start}/${end}`, order:'desc', orderBy:'conversationStart', paging:{ pageNumber:1, pageSize:100 }, segmentFilters:[ { type:'and', predicates:[ { type:'dimension', dimension:'queueId', operator:'matches', value: queueId }, { type:'dimension', dimension:'mediaType', operator:'matches', value:'email' } ] } ] };
         var res = await fetch(baseUrl()+"/api/v2/analytics/conversations/details/query", { method:"POST", headers:{ "Authorization":"Bearer "+token, "Content-Type":"application/json" }, body: JSON.stringify(body) });
         if (!res.ok){ throw new Error(res.status+" "+res.statusText+": "+ await res.text()); }
         var data = await res.json();
@@ -280,6 +259,7 @@
         rows.forEach(addRow);
         log(`Loaded ${rows.length} in-progress emails`);
         $("checkAll").checked = false;
+        filterRows();
       } catch(e){ setError(e.message||String(e)); }
     }
 
@@ -294,13 +274,13 @@
       return {
         conversationId: c.conversationId,
         subject: (comm && (comm.subject || comm.emailSubject)) || '',
-        from: (external && (external.address || external.externalContactId || external.name)) || '',
+        from: (external && (external.address || external.email || external.name)) || '',
         agentParticipantId: (agent && agent.participantId) || null,
         acdParticipantId: (acd && acd.participantId) || null,
-        emailCommId: (comm && (comm.sessionId || comm.communicationId)) || null,
-        _needsEnrich: true // mark for enrichment if fields are blank
+        emailCommId: (comm && (comm.sessionId || comm.communicationId)) || null
       };
     }
+
     function addRow(r){
       var tr = document.createElement('tr');
       tr.innerHTML = `
@@ -314,6 +294,7 @@
       $("rows").appendChild(tr);
       if (!r.subject || !r.from) enrichRowDetails(r.conversationId, tr); // async enrichment
     }
+
     function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
     async function assignToMe(){
@@ -332,7 +313,24 @@
         await refreshEmails();
       } catch(e){ setError(e.message||String(e)); }
     }
-    
+
+    async function loadUsers(){
+      clearError();
+      $("userSelect").innerHTML = '<option value="" disabled selected>Loading…</option>';
+      try {
+        var items = []; var page=1, pageSize=100, data;
+        do {
+          data = await api(`/api/v2/users?pageSize=${pageSize}&pageNumber=${page}&state=active`);
+          if (data && Array.isArray(data.entities)) {
+            data.entities.forEach(u => items.push({ id:u.id, name:u.name, email:u.email }));
+          }
+          page++;
+        } while (data && data.pageCount && page <= data.pageCount);
+        items.sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+        $("userSelect").innerHTML = ['<option value="" disabled selected>Choose a user</option>']
+          .concat(items.map(u=>`<option value="${u.id}">${esc(u.name || '(no name)')}${u.email?(' ('+esc(u.email)+')'):''}</option>`)).join('');
+      } catch(e){ setError(e.message||String(e)); $("userSelect").innerHTML = '<option disabled selected>Error loading users</option>'; }
+    }
 
     async function transferToUser(){
       var userId = $("userSelect").value; if (!userId){ log('Pick a user from the list'); return; }
@@ -357,10 +355,8 @@
         try {
           var participantId = r.agentParticipantId; var commId = r.emailCommId;
           if (!participantId || !commId){ log(`Conversation ${r.conversationId}: no agent participant/comm — transfer to an agent first.`); fail++; continue; }
-          // Apply communication-level wrap-up
           var w = await fetch(baseUrl()+`/api/v2/conversations/emails/${r.conversationId}/participants/${participantId}/communications/${commId}/wrapup`, { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ code: codeId }) });
           if (!w.ok) { throw new Error(await w.text()); }
-          // Disconnect the agent participant
           var d = await fetch(baseUrl()+`/api/v2/conversations/emails/${r.conversationId}/participants/${participantId}`, { method:'PATCH', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ state:'disconnected' }) });
           if (!d.ok) { throw new Error(await d.text()); }
           ok++;
@@ -368,24 +364,20 @@
       }
       log(`Wrap-up + disconnect done. Success: ${ok}, Failed: ${fail}`);
       await refreshEmails();
-      
+    }
+
     async function enrichRowDetails(conversationId, tr){
       try {
         var convo = await api(`/api/v2/conversations/${conversationId}`);
-        // Try to find email subject/from from full conversation if analytics summary was sparse
         var parts = (convo && convo.participants) || [];
         var external = parts.find(p=>p.purpose==='external');
         var agent = parts.find(p=>p.purpose==='agent' || p.purpose==='user');
-        var aEmail = agent && (agent.communications || agent.sessions || []);
-        var subject = '';
-        if (aEmail && aEmail.length){
-          var e = aEmail.find(s=>s.mediaType==='email') || aEmail[0];
-          subject = (e && (e.subject || e.emailSubject || (e.additionalProperties && e.additionalProperties.subject))) || '';
-        }
+        var comms = (agent && (agent.communications || agent.sessions)) || [];
+        var emailComm = Array.isArray(comms) ? comms.find(s=>s.mediaType==='email') : null;
+        var subject = (emailComm && (emailComm.subject || emailComm.emailSubject || (emailComm.additionalProperties && emailComm.additionalProperties.subject))) || '';
         var from = (external && (external.address || external.email || external.name)) || '';
         if (subject) tr.querySelector('.cell-subject').textContent = subject;
         if (from) tr.querySelector('.cell-from').textContent = from;
-        // update payload cache
         var r = JSON.parse(tr.dataset.payload);
         r.subject = subject || r.subject; r.from = from || r.from;
         tr.dataset.payload = JSON.stringify(r);
@@ -403,9 +395,6 @@
         tr.style.display = (sOk && fOk) ? '' : 'none';
       });
     }
-
   </script>
-</body>
-</html>
 </body>
 </html>
