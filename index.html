@@ -40,11 +40,18 @@
       <div class="header">
         <div class="title">Email Bulk Actions</div>
         <div class="row" style="max-width:620px">
-          <a id="signinLink" class="button" href="https://login.mypurecloud.jp/oauth/authorize?client_id=5ad8dc1d-2ee1-41dd-9771-1c0e58f22203&amp;response_type=token&amp;redirect_uri=https%3A%2F%2Fchinarn.github.io%2Femailwizard%2F&amp;state=email_bulk_implicit" target="_self" rel="nofollow noopener">Sign in</a>
-          <noscript><div class="muted" style="margin-top:6px">JavaScript is disabled. Use the button above to sign in.</div></noscript>
+          <!-- Hard-coded authorize link (works even if JS fails) -->
+          <a
+            id="signinLink"
+            class="button"
+            href="https://login.mypurecloud.jp/oauth/authorize?client_id=5ad8dc1d-2ee1-41dd-9771-1c0e58f22203&amp;response_type=token&amp;redirect_uri=https%3A%2F%2Fchinarn.github.io%2Femailwizard%2F&amp;state=email_bulk_implicit"
+            target="_self"
+            rel="nofollow noopener"
+          >Sign in</a>
           <button id="signoutBtn" style="display:none">Sign out</button>
         </div>
       </div>
+
       <div class="content">
         <div class="row">
           <div style="flex:2">
@@ -133,94 +140,90 @@
     // =================================
 
     function $(id){ return document.getElementById(id); }
-    var token = '';
+    // Make token global so any function can see it
+    window.token = window.token || '';
+
     function baseUrl(){ return 'https://api.' + REGION_HOST; }
 
     function log(line){
       var t = $('log'); var s = new Date().toLocaleTimeString();
-      t.value = (t.value ? t.value + '
-' : '') + s + ' • ' + line; t.scrollTop = t.scrollHeight;
+      if (t) { t.value = (t.value ? t.value + '\n' : '') + s + ' • ' + line; t.scrollTop = t.scrollHeight; }
+      try { console.log(line); } catch(_){}
     }
-    function setError(msg){ $('errors').textContent = msg || ''; }
+    function setError(msg){ var e=$('errors'); if (e) e.textContent = msg || ''; }
     function clearError(){ setError(''); }
 
-    function buildAuthUrl(){
-      var base = 'https://login.' + REGION_HOST + '/oauth/authorize';
-      var q = 'client_id=' + encodeURIComponent(CLIENT_ID)
-            + '&response_type=token'
-            + '&redirect_uri=' + encodeURIComponent(REDIRECT_URI)
-            + '&state=' + encodeURIComponent(OAUTH_STATE);
-      return base + '?' + q;
-    }
-    function readTokenFromHash(){
-      if (!location.hash) return null;
-      var p = new URLSearchParams(location.hash.substring(1));
-      var t = p.get('access_token');
-      var exp = p.get('expires_in');
-      var tok = t ? { access_token: t, expires_in: exp ? parseInt(exp,10) : null } : null;
-      return tok;
-    }{
-      if (!location.hash) return null;
-      var p = new URLSearchParams(location.hash.substring(1));
-      var t = p.get('access_token');
-      if (t){ history.replaceState({}, document.title, window.location.pathname + window.location.search); }
-      return t ? { access_token:t } : null;
-    }
+    // --- Robust hash token handler (runs on load + on hashchange) ---
+    (function(){
+      function readTokenFromHash(){
+        if (!location.hash) return null;
+        var p = new URLSearchParams(location.hash.substring(1));
+        var t = p.get('access_token');
+        var exp = p.get('expires_in');
+        return t ? { access_token:t, expires_in: exp ? parseInt(exp,10) : null } : null;
+      }
+      function applyToken(th){
+        if (!th || !th.access_token) return;
+        window.token = th.access_token;
+        var tokEl = $('token'); if (tokEl) tokEl.value = window.token;
+        updateSigninState();
+        // Clean the hash (pretty URL) AFTER UI updates
+        try { history.replaceState({}, document.title, location.pathname + location.search); } catch(_){}
+        // Kick off app
+        try { bootstrap(); } catch(e){ setError(e && e.message ? e.message : String(e)); }
+        log('Token detected and applied.');
+      }
+      function handle(){ var th = readTokenFromHash(); if (th) applyToken(th); }
+      window.addEventListener('DOMContentLoaded', handle);
+      window.addEventListener('hashchange', handle);
+      // Also run immediately in case DOMContentLoaded has already fired
+      handle();
+    })();
 
     function updateSigninState(){
-      var signedIn = !!token;
+      var signedIn = !!window.token;
       var sl = $('signinLink'); if (sl) sl.style.display = signedIn ? 'none' : 'inline-block';
-      $('signoutBtn').style.display = signedIn ? 'inline-block' : 'none';
+      var so = $('signoutBtn'); if (so) so.style.display = signedIn ? 'inline-block' : 'none';
       ['refreshBtn','assignMeBtn','transferBtn','loadUsersBtn'].forEach(function(id){ var el=$(id); if(el) el.disabled = !signedIn; });
-      $('queueSelect').disabled = !signedIn;
-      $('wrapupSelect').disabled = !signedIn || !$('queueSelect').value;
-      $('wrapDiscBtn').disabled = !signedIn || !$('queueSelect').value;
-      $('userSelect').disabled = !signedIn;
-      $('token').value = token || '';
+      var qs = $('queueSelect'); if (qs) qs.disabled = !signedIn;
+      var wu = $('wrapupSelect'); if (wu) wu.disabled = !signedIn || !($('queueSelect') && $('queueSelect').value);
+      var wd = $('wrapDiscBtn'); if (wd) wd.disabled = !signedIn || !($('queueSelect') && $('queueSelect').value);
+      var us = $('userSelect'); if (us) us.disabled = !signedIn;
     }
 
-    // Anchor-based sign-in (less brittle than programmatic nav)
-    function wireSigninLink(){ /* Not needed: anchor is now hard-coded for reliability */ }
-
-    $('signoutBtn').addEventListener('click', function(){ token=''; $('rows').innerHTML=''; $('queueSelect').innerHTML='<option disabled selected>Sign in first</option>'; $('wrapupSelect').innerHTML='<option disabled selected>Select a queue first</option>'; updateSigninState(); $('whoami').textContent=''; $('queueCount').textContent=''; $('log').value=''; $('userSelect').innerHTML='<option value="" disabled selected>Load users…</option>'; });
+    $('signoutBtn').addEventListener('click', function(){
+      window.token='';
+      $('rows').innerHTML='';
+      $('queueSelect').innerHTML='<option disabled selected>Sign in first</option>';
+      $('wrapupSelect').innerHTML='<option disabled selected>Select a queue first</option>';
+      updateSigninState();
+      $('whoami').textContent='';
+      $('queueCount').textContent='';
+      $('log').value='';
+      $('userSelect').innerHTML='<option value="" disabled selected>Load users…</option>';
+    });
 
     window.addEventListener('error', function(e){ setError(e && e.message ? e.message : 'Script error'); });
     window.addEventListener('unhandledrejection', function(e){ setError('Promise rejection: ' + (e && e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
 
-    (function init(){
+    // ----- App wiring (runs regardless of auth) -----
+    (function initUI(){
+      var qs = $('queueSelect'); if (qs) qs.addEventListener('change', function(){ loadWrapupsForQueue(this.value); $('wrapupSelect').disabled = !this.value; $('wrapDiscBtn').disabled = !this.value; filterRows(); });
+      var rb = $('refreshBtn'); if (rb) rb.addEventListener('click', refreshEmails);
+      var am = $('assignMeBtn'); if (am) am.addEventListener('click', assignToMe);
+      var tr = $('transferBtn'); if (tr) tr.addEventListener('click', transferToUser);
+      var lu = $('loadUsersBtn'); if (lu) lu.addEventListener('click', loadUsers);
+      var wd = $('wrapDiscBtn'); if (wd) wd.addEventListener('click', wrapupAndDisconnect);
+      var ca = $('checkAll'); if (ca) ca.addEventListener('change', function(e){ var cbs=document.querySelectorAll('#rows input[type="checkbox"]'); for (var i=0;i<cbs.length;i++){ cbs[i].checked = e.target.checked; } });
+      var fs = $('filterSubject'); if (fs) fs.addEventListener('input', filterRows);
+      var ff = $('filterFrom'); if (ff) ff.addEventListener('input', filterRows);
       log('App loaded. Redirect URI: ' + REDIRECT_URI);
-      wireSigninLink();
-      function handleTokenInUrl(){
-        var th = readTokenFromHash();
-        if (th && th.access_token){
-          token = th.access_token;
-          log('Token detected in URL hash.');
-          updateSigninState();
-          // Clean the hash AFTER we update UI so user sees token immediately during first paint
-          try{ history.replaceState({}, document.title, window.location.pathname + window.location.search); }catch(_){/* ignore */}
-          if (token) bootstrap();
-        }
-      }
-      // Run once now
-      handleTokenInUrl();
-      // And whenever the hash changes
-      window.addEventListener('hashchange', handleTokenInUrl);
-
-      // Wire UI actions
-      $('queueSelect').addEventListener('change', function(){ loadWrapupsForQueue(this.value); $('wrapupSelect').disabled = !this.value; $('wrapDiscBtn').disabled = !this.value; filterRows(); });
-      $('refreshBtn').addEventListener('click', refreshEmails);
-      $('assignMeBtn').addEventListener('click', assignToMe);
-      $('transferBtn').addEventListener('click', transferToUser);
-      $('loadUsersBtn').addEventListener('click', loadUsers);
-      $('wrapDiscBtn').addEventListener('click', wrapupAndDisconnect);
-      $('checkAll').addEventListener('change', function(e){ var cbs=document.querySelectorAll('#rows input[type="checkbox"]'); for (var i=0;i<cbs.length;i++){ cbs[i].checked = e.target.checked; } });
-      $('filterSubject').addEventListener('input', filterRows);
-      $('filterFrom').addEventListener('input', filterRows);
     })();
 
+    // ===== API helpers & features =====
     async function api(path, init){
-      if (!token) throw new Error('Missing OAuth token');
-      var res = await fetch(baseUrl() + path, Object.assign({}, init||{}, { headers: Object.assign({ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, (init && init.headers) || {}) }));
+      if (!window.token) throw new Error('Missing OAuth token');
+      var res = await fetch(baseUrl() + path, Object.assign({}, init||{}, { headers: Object.assign({ 'Authorization':'Bearer '+window.token, 'Content-Type':'application/json' }, (init && init.headers) || {}) }));
       if (!res.ok){ var text = await res.text(); throw new Error(res.status + ' ' + res.statusText + ': ' + text); }
       return res.json();
     }
@@ -284,23 +287,21 @@
         var end = new Date().toISOString();
         var start = new Date(Date.now() - 2*60*60*1000).toISOString();
         var body = { interval: start + '/' + end, order:'desc', orderBy:'conversationStart', paging:{ pageNumber:1, pageSize:100 }, segmentFilters:[ { type:'and', predicates:[ { type:'dimension', dimension:'queueId', operator:'matches', value: queueId }, { type:'dimension', dimension:'mediaType', operator:'matches', value:'email' } ] } ] };
-        var res = await fetch(baseUrl() + '/api/v2/analytics/conversations/details/query', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+        var res = await fetch(baseUrl() + '/api/v2/analytics/conversations/details/query', { method:'POST', headers:{ 'Authorization':'Bearer '+window.token, 'Content-Type':'application/json' }, body: JSON.stringify(body) });
         if (!res.ok){ throw new Error(res.status + ' ' + res.statusText + ': ' + (await res.text())); }
         var data = await res.json();
         var convs = (data && data.conversations) ? data.conversations : [];
-        var rows = [];
         for (var i=0;i<convs.length;i++){
-          var c = convs[i]; if (c.conversationEnd) continue; rows.push(marshalRow(c));
+          var c = convs[i]; if (c.conversationEnd) continue; addRow(marshalRow(c));
         }
-        for (var r=0;r<rows.length;r++){ addRow(rows[r]); }
-        log('Loaded ' + rows.length + ' in-progress emails');
-        $('checkAll').checked = false; filterRows();
+        log('Loaded ' + document.querySelectorAll('#rows tr').length + ' in-progress emails');
+        var ca = $('checkAll'); if (ca) ca.checked = false; filterRows();
       }catch(e){ setError(e.message || String(e)); }
     }
 
     function marshalRow(c){
       var parts = c.participants || [];
-      var external = null, agent = null, acd = null;
+      var external=null, agent=null, acd=null;
       for (var i=0;i<parts.length;i++){
         var p = parts[i];
         if (p.purpose === 'external') external = p;
@@ -324,7 +325,8 @@
 
     function addRow(r){
       var tr = document.createElement('tr');
-      tr.innerHTML = '<td><input type="checkbox"></td>'+
+      tr.innerHTML =
+        '<td><input type="checkbox"></td>'+
         '<td class="cell-subject">' + esc(r.subject||'') + '</td>'+
         '<td class="cell-from">' + esc(r.from||'') + '</td>'+
         '<td class="mono">' + esc(r.conversationId) + '</td>'+
@@ -335,7 +337,7 @@
       if (!r.subject || !r.from) enrichRowDetails(r.conversationId, tr);
     }
 
-    function esc(s){ return (s||'').toString().replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]; }); }
+    function esc(s){ return (s||'').toString().replace(/[&<>\"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;'}[c]; }); }
 
     async function assignToMe(){
       var sel = selectedRows(); if (!sel.length){ log('Select at least one row'); return; }
@@ -344,7 +346,7 @@
         for (var i=0;i<sel.length;i++){
           var r = sel[i]; try{
             var holder = r.agentParticipantId || r.acdParticipantId; if (!holder){ fail++; continue; }
-            var res = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + holder + '/replace', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ userId: me.id, transferType:'Unattended' }) });
+            var res = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + holder + '/replace', { method:'POST', headers:{ 'Authorization':'Bearer '+window.token, 'Content-Type':'application/json' }, body: JSON.stringify({ userId: me.id, transferType:'Unattended' }) });
             if (!res.ok) throw new Error(await res.text()); ok++;
           }catch(e){ fail++; }
         }
@@ -377,7 +379,7 @@
       for (var i=0;i<sel.length;i++){
         var r = sel[i]; try{
           var holder = r.agentParticipantId || r.acdParticipantId; if (!holder){ fail++; continue; }
-          var res = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + holder + '/replace', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ userId: userId, transferType:'Unattended' }) });
+          var res = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + holder + '/replace', { method:'POST', headers:{ 'Authorization':'Bearer '+window.token, 'Content-Type':'application/json' }, body: JSON.stringify({ userId: userId, transferType:'Unattended' }) });
           if (!res.ok) throw new Error(await res.text()); ok++;
         }catch(e){ fail++; }
       }
@@ -401,9 +403,9 @@
             for (var s=0;s<sacks.length;s++){ var x=sacks[s]; if (x && x.mediaType==='email'){ commId = x.id || x.sessionId || x.communicationId; if (commId) break; } }
           }
           if (!participantId || !commId){ log('Conversation ' + r.conversationId + ': could not locate an email leg on agent/ACD participant.'); fail++; continue; }
-          var w = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + participantId + '/communications/' + commId + '/wrapup', { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ code: codeId }) });
+          var w = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + participantId + '/communications/' + commId + '/wrapup', { method:'POST', headers:{ 'Authorization':'Bearer '+window.token, 'Content-Type':'application/json' }, body: JSON.stringify({ code: codeId }) });
           if (!w.ok) throw new Error(await w.text());
-          var d = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + participantId, { method:'PATCH', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ state:'disconnected' }) });
+          var d = await fetch(baseUrl() + '/api/v2/conversations/emails/' + r.conversationId + '/participants/' + participantId, { method:'PATCH', headers:{ 'Authorization':'Bearer '+window.token, 'Content-Type':'application/json' }, body: JSON.stringify({ state:'disconnected' }) });
           if (!d.ok) throw new Error(await d.text());
           ok++;
         }catch(e){ fail++; }
