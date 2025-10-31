@@ -127,7 +127,7 @@
     // MUST match your OAuth app config exactly
     var REGION_HOST  = "mypurecloud.jp"; // Tokyo (login/api host suffix)
     var CLIENT_ID    = "5ad8dc1d-2ee1-41dd-9771-1c0e58f22203"; // your implicit client id
-    var REDIRECT_URI = "https://chinarn.github.io/emailwizard/"; // your whitelisted redirect
+    var REDIRECT_URI = "https://chinarn.github.io/evaluateworkitem/"; // your whitelisted redirect
     var OAUTH_STATE  = "email_bulk_implicit";
     // =================================
 
@@ -138,7 +138,8 @@
     function log(line){
       var stamp = new Date().toLocaleTimeString();
       var t = $("log");
-      t.value = (t.value ? t.value + "\n" : "") + stamp + " • " + line;
+      t.value = (t.value ? t.value + "
+" : "") + stamp + " • " + line;
       t.scrollTop = t.scrollHeight;
     }
     function setError(msg){ $("errors").textContent = msg || ""; }
@@ -418,27 +419,55 @@
 
     async function enrichRowDetails(conversationId, tr){
       try {
-        // Try the conversations/emails endpoint first for richer email metadata
-        var detailRes = await api(`/api/v2/conversations/emails/${conversationId}`);
-        var parts = (detailRes && detailRes.participants) || [];
-        if (!parts.length){
-          // Fallback to generic conversation details
-          detailRes = await api(`/api/v2/conversations/${conversationId}`);
-          parts = (detailRes && detailRes.participants) || [];
+        const convo = await api(`/api/v2/conversations/${conversationId}`);
+        const parts = (convo && Array.isArray(convo.participants)) ? convo.participants : [];
+
+        // Helper to scan a participant for email metadata
+        const scanPart = (p)=>{
+          const sacks = (p && (p.communications || p.sessions)) || [];
+          let subj="", from="", commId=null;
+          if (Array.isArray(sacks)) {
+            for (const s of sacks) {
+              if (s && (s.mediaType === 'email')) {
+                // Subject
+                subj = s.subject || s.emailSubject || (s.additionalProperties && (s.additionalProperties.subject || s.additionalProperties.Subject)) || (s.headers && (s.headers.subject || s.headers.Subject)) || subj;
+                // From address can live under many shapes
+                from = s.fromAddress || s.fromEmail || s.from || (s.additionalProperties && (s.additionalProperties.from || s.additionalProperties.From)) || from;
+                commId = s.id || s.sessionId || s.communicationId || commId;
+                if (subj && from) break; // good enough
+              }
+            }
+          }
+          return { subj, from, commId };
+        };
+
+        // Prefer external participant for "from" if not found in leg
+        const external = parts.find(p => p.purpose === 'external');
+        const agentOrUser = parts.find(p => p.purpose === 'agent' || p.purpose === 'user');
+        const acd = parts.find(p => p.purpose === 'acd');
+
+        let { subj, from, commId } = scanPart(agentOrUser) ;
+        if (!subj || !from) {
+          const acdScan = scanPart(acd);
+          subj = subj || acdScan.subj;
+          from = from || acdScan.from;
+          commId = commId || acdScan.commId;
         }
-        var external = parts.find(p=>p.purpose==='external');
-        var owner = parts.find(p=>p.purpose==='agent' || p.purpose==='user') || parts.find(p=>p.purpose==='acd');
-        var comms = (owner && (owner.communications || owner.sessions)) || [];
-        var emailComm = Array.isArray(comms) ? comms.find(s=>s.mediaType==='email') : null;
-        var subject = (emailComm && (emailComm.subject || emailComm.emailSubject || (emailComm.additionalProperties && emailComm.additionalProperties.subject))) || '';
-        var from = (external && (external.address || external.email || external.name)) || '';
-        if (subject) tr.querySelector('.cell-subject').textContent = subject;
+        if ((!from) && external) {
+          from = external.address || external.email || (external.attributes && (external.attributes.email || external.attributes.Email)) || from;
+        }
+
+        // Patch row in the table
+        if (subj) tr.querySelector('.cell-subject').textContent = subj;
         if (from) tr.querySelector('.cell-from').textContent = from;
-        var r = JSON.parse(tr.dataset.payload);
-        r.subject = subject || r.subject; r.from = from || r.from;
+        // Update payload cache
+        const r = JSON.parse(tr.dataset.payload);
+        r.subject = subj || r.subject; r.from = from || r.from; r.emailCommId = commId || r.emailCommId;
         tr.dataset.payload = JSON.stringify(r);
         filterRows();
-      } catch(e){ /* ignore enrichment failures */ }
+      } catch (e) {
+        log(`Enrich failed for ${conversationId}: ${e && e.message ? e.message : e}`);
+      }
     }
 
     function filterRows(){
