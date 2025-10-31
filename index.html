@@ -125,9 +125,9 @@
   <script>
     // ======== CONFIG (Preset) ========
     // Set these to your OAuth client + region. No UI prompts for region/redirect are shown.
-    var REGION_HOST  = "mypurecloud.jp"; // e.g., ap-southeast-1 (Singapore)
-    var CLIENT_ID    = "5ad8dc1d-2ee1-41dd-9771-1c0e58f22203";     // <-- set your OAuth client id
-    var REDIRECT_URI = window.location.origin + window.location.pathname; // same page
+    var REGION_HOST  = "mypurecloud.jp"; // Tokyo
+    var CLIENT_ID    = "5ad8dc1d-2ee1-41dd-9771-1c0e58f22203";
+    var REDIRECT_URI = window.location.origin + window.location.pathname; // or set to your exact allowed URL
     var OAUTH_STATE  = "email_bulk_implicit";
     // =================================
 
@@ -135,8 +135,12 @@
     var token = "";
     var baseUrl = function(){ return "https://api." + REGION_HOST; };
 
-    function log(line){ var stamp = new Date().toLocaleTimeString(); var t=$("log"); t.value = (t.value? t.value+"
-":"")+ stamp + " • " + line; t.scrollTop = t.scrollHeight; }
+    function log(line){
+      var stamp = new Date().toLocaleTimeString();
+      var t = $("log");
+      t.value = (t.value ? t.value + "\n" : "") + stamp + " • " + line;
+      t.scrollTop = t.scrollHeight;
+    }
     function setError(msg){ $("errors").textContent = msg || ""; }
     function clearError(){ setError(""); }
 
@@ -168,6 +172,9 @@
 
     $("signinBtn").addEventListener("click", function(){
       if (CLIENT_ID === "REPLACE_WITH_CLIENT_ID") { alert("Set CLIENT_ID at top of the file."); return; }
+      // Go straight to OAuth authorize (no pre-redirect gate)
+      location.href = buildAuthUrl();
+    }); return; }
       if (!location.href.startsWith(REDIRECT_URI)) { location.href = REDIRECT_URI; return; }
       location.href = buildAuthUrl();
     });
@@ -276,9 +283,11 @@
         conversationId: c.conversationId,
         subject: (comm && (comm.subject || comm.emailSubject)) || '',
         from: (external && (external.address || external.email || external.name)) || '',
+        // Prefer participant that owns the email comm; fall back to whichever exists
         agentParticipantId: (agent && agent.participantId) || null,
         acdParticipantId: (acd && acd.participantId) || null,
-        emailCommId: (comm && (comm.sessionId || comm.communicationId)) || null
+        emailCommId: (comm && (comm.sessionId || comm.communicationId)) || null,
+        owner: aSess ? 'agent' : (acdSess ? 'acd' : null)
       };
     }
 
@@ -354,10 +363,25 @@
       var ok=0,fail=0;
       for (var r of sel){
         try {
-          var participantId = r.agentParticipantId; var commId = r.emailCommId;
-          if (!participantId || !commId){ log(`Conversation ${r.conversationId}: no agent participant/comm — transfer to an agent first.`); fail++; continue; }
+          // Choose the participant that currently owns the email leg
+          var participantId = (r.owner === 'agent') ? r.agentParticipantId : r.acdParticipantId || r.agentParticipantId || r.acdParticipantId;
+          var commId = r.emailCommId;
+          if (!commId){
+            // Try to locate a communication id for the chosen participant
+            var convo = await api(`/api/v2/conversations/${r.conversationId}`);
+            var p = (convo.participants||[]).find(x=>x.id===participantId);
+            var comms = (p && (p.communications || p.sessions)) || [];
+            var emailComm = Array.isArray(comms) ? comms.find(s=>s.mediaType==='email') : null;
+            commId = emailComm && (emailComm.id || emailComm.sessionId || emailComm.communicationId);
+          }
+          if (!participantId || !commId){
+            log(`Conversation ${r.conversationId}: could not locate an email leg on agent/ACD participant.`);
+            fail++; continue;
+          }
+          // Apply communication-level wrap-up (works for agent or ACD leg)
           var w = await fetch(baseUrl()+`/api/v2/conversations/emails/${r.conversationId}/participants/${participantId}/communications/${commId}/wrapup`, { method:'POST', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ code: codeId }) });
           if (!w.ok) { throw new Error(await w.text()); }
+          // Disconnect that participant leg
           var d = await fetch(baseUrl()+`/api/v2/conversations/emails/${r.conversationId}/participants/${participantId}`, { method:'PATCH', headers:{ 'Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body: JSON.stringify({ state:'disconnected' }) });
           if (!d.ok) { throw new Error(await d.text()); }
           ok++;
@@ -369,11 +393,17 @@
 
     async function enrichRowDetails(conversationId, tr){
       try {
-        var convo = await api(`/api/v2/conversations/${conversationId}`);
-        var parts = (convo && convo.participants) || [];
+        // Try the conversations/emails endpoint first for richer email metadata
+        var detailRes = await api(`/api/v2/conversations/emails/${conversationId}`);
+        var parts = (detailRes && detailRes.participants) || [];
+        if (!parts.length){
+          // Fallback to generic conversation details
+          detailRes = await api(`/api/v2/conversations/${conversationId}`);
+          parts = (detailRes && detailRes.participants) || [];
+        }
         var external = parts.find(p=>p.purpose==='external');
-        var agent = parts.find(p=>p.purpose==='agent' || p.purpose==='user');
-        var comms = (agent && (agent.communications || agent.sessions)) || [];
+        var owner = parts.find(p=>p.purpose==='agent' || p.purpose==='user') || parts.find(p=>p.purpose==='acd');
+        var comms = (owner && (owner.communications || owner.sessions)) || [];
         var emailComm = Array.isArray(comms) ? comms.find(s=>s.mediaType==='email') : null;
         var subject = (emailComm && (emailComm.subject || emailComm.emailSubject || (emailComm.additionalProperties && emailComm.additionalProperties.subject))) || '';
         var from = (external && (external.address || external.email || external.name)) || '';
