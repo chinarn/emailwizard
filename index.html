@@ -104,7 +104,7 @@
   <script>
     // ======== CONFIG (Preset) ========
     // Set these to your OAuth client + region. No UI prompts for region/redirect are shown.
-    var REGION_HOST  = "mypurecloud.jp"; 
+    var REGION_HOST  = "mypurecloud.jp"; // e.g., ap-northeast-1 (Tokyo)
     var CLIENT_ID    = "5ad8dc1d-2ee1-41dd-9771-1c0e58f22203";     // <-- set your OAuth client id
     var REDIRECT_URI = window.location.origin + window.location.pathname; // same page
     var OAUTH_STATE  = "email_bulk_implicit";
@@ -202,14 +202,16 @@
     async function loadWrapupsForQueue(queueId){
       $("wrapupSelect").innerHTML = '<option value="" disabled selected>Loading…</option>';
       try {
+        // Only display WRAP-UP CODES associated with the selected queue
         var q = await api(`/api/v2/routing/queues/${queueId}?expand=wrapupCodes`);
         var codes = (q && q.wrapupCodes) || [];
+        if (!Array.isArray(codes)) codes = [];
         if (!codes.length){
-          // fallback: global list first 200
-          var page = await api('/api/v2/routing/wrapupcodes?pageSize=200');
-          codes = (page && page.entities) || [];
+          $("wrapupSelect").innerHTML = '<option value="" disabled selected>No wrap-up codes on this queue</option>';
+          return;
         }
-        $("wrapupSelect").innerHTML = ['<option value="" disabled selected>(choose wrap-up code)</option>'].concat(codes.map(c=>`<option value="${c.id}">${c.name} — ${c.id}</option>`)).join("");
+        $("wrapupSelect").innerHTML = ['<option value="" disabled selected>(choose wrap-up code)</option>']
+          .concat(codes.map(c=>`<option value="${c.id}">${c.name} — ${c.id}</option>`)).join("");
       } catch(e){ setError(e.message||String(e)); $("wrapupSelect").innerHTML = '<option disabled selected>Wrap-up codes unavailable</option>'; }
     }
 
@@ -221,7 +223,22 @@
       try {
         var end = new Date().toISOString();
         var start = new Date(Date.now() - 2*60*60*1000).toISOString();
-        var body = { interval: `${start}/${end}`, order:'desc', orderBy:'conversationStart', paging:{ pageNumber:1, pageSize:100 }, conversationFilters:[ { type:'and', predicates:[ { type:'dimension', dimension:'queueId', operator:'matches', value: queueId }, { type:'dimension', dimension:'mediaType', operator:'matches', value:'email' } ] } ] };
+        // NOTE: queueId is a SEGMENT dimension (not a conversation dimension)
+        var body = {
+          interval: `${start}/${end}`,
+          order: 'desc',
+          orderBy: 'conversationStart',
+          paging: { pageNumber: 1, pageSize: 100 },
+          segmentFilters: [
+            {
+              type: 'and',
+              predicates: [
+                { type:'dimension', dimension:'queueId', operator:'matches', value: queueId },
+                { type:'dimension', dimension:'mediaType', operator:'matches', value:'email' }
+              ]
+            }
+          ]
+        };
         var res = await fetch(baseUrl()+"/api/v2/analytics/conversations/details/query", { method:"POST", headers:{ "Authorization":"Bearer "+token, "Content-Type":"application/json" }, body: JSON.stringify(body) });
         if (!res.ok){ throw new Error(res.status+" "+res.statusText+": "+ await res.text()); }
         var data = await res.json();
