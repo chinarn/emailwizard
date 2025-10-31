@@ -127,7 +127,7 @@
     // MUST match your OAuth app config exactly
     var REGION_HOST  = "mypurecloud.jp"; // Tokyo (login/api host suffix)
     var CLIENT_ID    = "5ad8dc1d-2ee1-41dd-9771-1c0e58f22203"; // your implicit client id
-    var REDIRECT_URI = "https://chinarn.github.io/evaluateworkitem/"; // your whitelisted redirect
+    var REDIRECT_URI = window.location.origin + window.location.pathname; // must be whitelisted in your OAuth app
     var OAUTH_STATE  = "email_bulk_implicit";
     // =================================
 
@@ -177,16 +177,24 @@
           alert("Set CLIENT_ID at top of the file.");
           return;
         }
-        // Ensure we're on the correct redirect origin/path; if not, relocate there first
-        var here = window.location.href.split('#')[0];
-        if (here !== REDIRECT_URI) {
-          log("Navigating to redirect origin…");
-          window.location.assign(REDIRECT_URI);
-          return; // the next load will run init() again
-        }
+        // Log button press and current redirect
+        log("Sign-in clicked. Using redirect URI: " + REDIRECT_URI);
         const url = buildAuthUrl();
+        log("Auth URL prepared.");
         console.log("Redirecting to:", url);
-        log("Opening Genesys Cloud login…");
+        // Visible fallback link in case navigation is blocked
+        let a = document.getElementById('authLink');
+        if (!a) {
+          a = document.createElement('a');
+          a.id = 'authLink';
+          a.textContent = 'If nothing happens, click here to continue to Genesys Cloud login';
+          a.className = 'muted';
+          a.style.display = 'block';
+          a.style.marginTop = '8px';
+          document.querySelector('.content').insertBefore(a, document.querySelector('.content').firstChild);
+        }
+        a.href = url;
+        // Try programmatic navigation first
         window.location.assign(url);
       } catch (e) {
         setError(e && e.message ? e.message : String(e));
@@ -223,6 +231,9 @@
       $("checkAll").addEventListener("change", function(e){ document.querySelectorAll('#rows input[type="checkbox"]').forEach(cb => cb.checked = e.target.checked); });
       $("filterSubject").addEventListener("input", filterRows);
       $("filterFrom").addEventListener("input", filterRows);
+      // Extra visibility: show current href and redirect URI
+      console.log("Current URL:", window.location.href);
+      console.log("Configured REDIRECT_URI:", REDIRECT_URI);
     })();
 
     async function api(path, init){
