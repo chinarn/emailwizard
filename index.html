@@ -124,10 +124,10 @@
 
   <script>
     // ======== CONFIG (Preset) ========
-    // Set these to your OAuth client + region. No UI prompts for region/redirect are shown.
-    var REGION_HOST  = "mypurecloud.jp"; // Tokyo
-    var CLIENT_ID    = "5ad8dc1d-2ee1-41dd-9771-1c0e58f22203";
-    var REDIRECT_URI = window.location.origin + window.location.pathname; // or set to your exact allowed URL
+    // MUST match your OAuth app config exactly
+    var REGION_HOST  = "mypurecloud.jp"; // Tokyo (login/api host suffix)
+    var CLIENT_ID    = "5ad8dc1d-2ee1-41dd-9771-1c0e58f22203"; // your implicit client id
+    var REDIRECT_URI = "https://chinarn.github.io/evaluateworkitem/"; // your whitelisted redirect
     var OAUTH_STATE  = "email_bulk_implicit";
     // =================================
 
@@ -138,8 +138,7 @@
     function log(line){
       var stamp = new Date().toLocaleTimeString();
       var t = $("log");
-      t.value = (t.value ? t.value + "
-" : "") + stamp + " • " + line;
+      t.value = (t.value ? t.value + "\n" : "") + stamp + " • " + line;
       t.scrollTop = t.scrollHeight;
     }
     function setError(msg){ $("errors").textContent = msg || ""; }
@@ -177,24 +176,41 @@
           alert("Set CLIENT_ID at top of the file.");
           return;
         }
-        // Log what we're about to open (helps diagnose popup blockers / bad URLs)
+        // Ensure we're on the correct redirect origin/path; if not, relocate there first
+        var here = window.location.href.split('#')[0];
+        if (here !== REDIRECT_URI) {
+          log("Navigating to redirect origin…");
+          window.location.assign(REDIRECT_URI);
+          return; // the next load will run init() again
+        }
         const url = buildAuthUrl();
         console.log("Redirecting to:", url);
         log("Opening Genesys Cloud login…");
-        // Top-level navigation (no popup)
         window.location.assign(url);
       } catch (e) {
         setError(e && e.message ? e.message : String(e));
       }
     });
-    $("signoutBtn").addEventListener("click", function(){ token=""; $("rows").innerHTML=""; $("queueSelect").innerHTML='<option disabled selected>Sign in first</option>'; $("wrapupSelect").innerHTML='<option disabled selected>Select a queue first</option>'; updateSigninState(); $("whoami").textContent=""; $("queueCount").textContent=""; $("log").value=""; $("userSelect").innerHTML='<option value="" disabled selected>Load users…</option>'; });
+
+    $("signoutBtn").addEventListener("click", function(){
+      token="";
+      $("rows").innerHTML="";
+      $("queueSelect").innerHTML='<option disabled selected>Sign in first</option>';
+      $("wrapupSelect").innerHTML='<option disabled selected>Select a queue first</option>';
+      updateSigninState();
+      $("whoami").textContent="";
+      $("queueCount").textContent="";
+      $("log").value="";
+      $("userSelect").innerHTML='<option value="" disabled selected>Load users…</option>';
+    });
 
     window.addEventListener("error", function(e){ setError((e&&e.message)? e.message: "Script error"); });
     window.addEventListener("unhandledrejection", function(e){ setError("Promise rejection: " + (e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
 
     (function init(){
+      log("App loaded. Ready to sign in.");
       var th = readTokenFromHash();
-      if (th) { token = th.access_token; }
+      if (th) { token = th.access_token; log("Token received."); }
       updateSigninState();
       if (token) bootstrap();
       $("queueSelect").addEventListener("change", function(){ loadWrapupsForQueue(this.value); $("wrapupSelect").disabled = !this.value; $("wrapDiscBtn").disabled = !this.value; filterRows(); });
